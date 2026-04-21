@@ -1,5 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
+import { commands } from "@/bindings";
 import { Cog, FlaskConical, Heart, History, Info, Library, Sparkles, Cpu, Video } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
@@ -108,6 +110,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const [meetingActive, setMeetingActive] = useState<boolean>(false);
+
+  // Track whether a meeting is currently recording so the sidebar can surface
+  // a pulsing sage indicator next to the Meetings tab. Pulls the initial
+  // state on mount and keeps it in sync with meeting-state events.
+  useEffect(() => {
+    let cancelled = false;
+    commands.meetingActive().then((id) => {
+      if (!cancelled) setMeetingActive(id != null);
+    });
+    const p = listen<{ state: string }>("meeting-state-event", (evt) => {
+      if (evt.payload.state === "started") setMeetingActive(true);
+      else if (evt.payload.state === "stopped" || evt.payload.state === "error")
+        setMeetingActive(false);
+    });
+    return () => {
+      cancelled = true;
+      p.then((fn) => fn()).catch(() => undefined);
+    };
+  }, []);
 
   const availableSections = Object.entries(SECTIONS_CONFIG)
     .filter(([_, config]) => config.enabled(settings))
@@ -126,8 +148,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               key={section.id}
               className={`flex gap-2 items-center p-2 w-full rounded-lg cursor-pointer transition-colors ${
                 isActive
-                  ? "bg-logo-primary/80"
-                  : "hover:bg-mid-gray/20 hover:opacity-100 opacity-85"
+                  ? "bg-lezat-sage text-[#0d0d1a]"
+                  : "hover:bg-lezat-sage/15 hover:opacity-100 opacity-85"
               }`}
               onClick={() => onSectionChange(section.id)}
             >
@@ -138,6 +160,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 {t(section.labelKey)}
               </p>
+              {section.id === "meetings" && meetingActive && (
+                <span
+                  className="ml-auto w-2 h-2 rounded-full bg-lezat-sage animate-pulse shrink-0"
+                  title="Meeting in progress"
+                />
+              )}
             </div>
           );
         })}

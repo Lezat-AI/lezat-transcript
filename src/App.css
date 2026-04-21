@@ -12,7 +12,7 @@
   --color-logo-stroke: #1a1a2e;
   --color-text-stroke: #f6f6f6;
   --color-mid-gray: #808080;
-  --color-lezat-sage: hsl(140 35% 65%);
+  --color-lezat-sage: #86c49b;
 }
 
 :root {
@@ -63,6 +63,9 @@
     --color-background: #0d0d1a;
     --color-logo-primary: #f0f0f5;
     --color-logo-stroke: #c4c4d6;
+    /* Sage holds up on both themes; keeping it at the same hex means accents
+       feel like the same brand color regardless of system appearance. */
+    --color-lezat-sage: #86c49b;
   }
 }
 
