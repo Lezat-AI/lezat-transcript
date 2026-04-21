@@ -158,12 +158,28 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
         // config value we passed in is only a hint; ScreenCaptureKit can
         // deliver a different rate. Rust side reads this to know how to
         // resample to 16 kHz for Whisper.
-        lock.lock()
-        if abs(captureSampleRate - actualRate) > 1 {
-            NSLog("LezatSystemAudio: first buffer — rate=\(actualRate)Hz, ch=\(channels)")
-            captureSampleRate = actualRate
+        let firstBuffer: Bool = {
+            lock.lock()
+            defer { lock.unlock() }
+            let isFirst = abs(captureSampleRate - actualRate) > 1
+            if isFirst {
+                captureSampleRate = actualRate
+            }
+            return isFirst
+        }()
+
+        if firstBuffer {
+            let flags = asbd.mFormatFlags
+            let isFloat = (flags & kAudioFormatFlagIsFloat) != 0
+            let isPacked = (flags & kAudioFormatFlagIsPacked) != 0
+            let isNonInterleaved = (flags & kAudioFormatFlagIsNonInterleaved) != 0
+            NSLog(
+                "LezatSystemAudio: first buffer — rate=\(actualRate)Hz, ch=\(channels), "
+                    + "bits=\(asbd.mBitsPerChannel), "
+                    + "float=\(isFloat), packed=\(isPacked), "
+                    + "nonInterleaved=\(isNonInterleaved)"
+            )
         }
-        lock.unlock()
 
         // Grab the interleaved float buffer out of the CMSampleBuffer.
         var blockBuffer: CMBlockBuffer?
@@ -187,18 +203,40 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
         let floatCount = byteCount / MemoryLayout<Float>.size
         if floatCount == 0 { return }
 
-        let floats = rawData.bindMemory(to: Float.self, capacity: floatCount)
-        var mono: [Float] = []
-        mono.reserveCapacity(floatCount / max(channels, 1))
+        let isNonInterleaved =
+            (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
 
-        var i = 0
-        while i + channels - 1 < floatCount {
-            var sum: Float = 0
-            for c in 0..<channels {
-                sum += floats[i + c]
+        var mono: [Float] = []
+        if isNonInterleaved {
+            // Each channel lives in its own AudioBuffer. Average them frame
+            // by frame. Assumes all buffers have the same frame count, which
+            // is the CoreAudio contract for non-interleaved PCM.
+            let perChannelSamples = floatCount
+            mono.reserveCapacity(perChannelSamples)
+            let planeCount = buffers.count
+            let planes: [UnsafeMutablePointer<Float>] = buffers.compactMap { b in
+                b.mData?.bindMemory(to: Float.self, capacity: perChannelSamples)
             }
-            mono.append(sum / Float(channels))
-            i += channels
+            for i in 0..<perChannelSamples {
+                var sum: Float = 0
+                for p in 0..<planeCount {
+                    sum += planes[p][i]
+                }
+                mono.append(sum / Float(planeCount))
+            }
+        } else {
+            // Interleaved PCM — the common case. channels samples per frame.
+            let floats = rawData.bindMemory(to: Float.self, capacity: floatCount)
+            mono.reserveCapacity(floatCount / max(channels, 1))
+            var i = 0
+            while i + channels - 1 < floatCount {
+                var sum: Float = 0
+                for c in 0..<channels {
+                    sum += floats[i + c]
+                }
+                mono.append(sum / Float(channels))
+                i += channels
+            }
         }
 
         lock.lock()
