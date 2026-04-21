@@ -202,7 +202,7 @@ export function MeetingsPage() {
             <button
               onClick={handleStart}
               disabled={busy}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg bg-logo-primary text-white font-medium hover:opacity-90 disabled:opacity-50 transition"
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg bg-logo-primary text-background font-medium hover:opacity-90 disabled:opacity-50 transition"
             >
               {busy ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
