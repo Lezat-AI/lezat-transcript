@@ -45,7 +45,11 @@ jobs:
             # Windows redirects CARGO_TARGET_DIR to C:\t (see "Shorten build
             # path" step) to avoid MAX_PATH issues in whisper.cpp's cmake build.
             asset-glob: C:/t/release/bundle/msi/*.msi
-            updater-glob: C:/t/release/bundle/msi/*.msi.zip*
+            # Tauri v2 on Windows doesn't wrap the MSI in .zip for updates —
+            # it ships the .msi plus a .msi.sig next to it. `*.msi*` catches
+            # both without double-uploading the installer. The publish step
+            # filters out the non-.sig bundle from the updater directory.
+            updater-glob: C:/t/release/bundle/msi/*.msi*
             updater-key: windows-x86_64
 
           - platform: ubuntu-24.04

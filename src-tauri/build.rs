@@ -319,7 +319,11 @@ fn build_system_audio_bridge() {
     .to_string();
     let is_full_xcode = developer_dir.contains(".app/");
 
-    let forced_stub = env::var("LEZAT_AI_STUB").ok().as_deref() == Some("1");
+    // Separate opt-out from LEZAT_AI_STUB — LEZAT_AI_STUB was only meant to
+    // gate the Apple Intelligence bridge, and coupling the system-audio
+    // stub to it silently defeated the whole ScreenCaptureKit path in CI
+    // (which sets LEZAT_AI_STUB=1 to avoid the AI macros).
+    let forced_stub = env::var("LEZAT_SYSAUDIO_STUB").ok().as_deref() == Some("1");
 
     let use_real = sdk_has_sck && is_full_xcode && !forced_stub;
 
@@ -333,7 +337,7 @@ fn build_system_audio_bridge() {
         (REAL_SWIFT_FILE, arch)
     } else {
         let reason = if forced_stub {
-            "LEZAT_AI_STUB=1"
+            "LEZAT_SYSAUDIO_STUB=1"
         } else if !sdk_has_sck {
             "SDK lacks ScreenCaptureKit.framework"
         } else {

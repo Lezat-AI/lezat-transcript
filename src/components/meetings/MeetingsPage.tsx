@@ -325,8 +325,9 @@ export function MeetingsPage() {
           <div>
             <h2 className="text-lg font-bold">Meeting Mode</h2>
             <p className="text-sm text-mid-gray">
-              Records your microphone and transcribes continuously. System audio
-              capture (for the other side of a call) lands in the next update.
+              Records your microphone and, optionally, the other side of the
+              call — then transcribes continuously. Use the checkbox below to
+              enable system-audio capture.
             </p>
           </div>
           {activeId !== null && (
