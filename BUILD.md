@@ -1,130 +1,142 @@
-# Build Instructions
+# Building Lezat Transcript
 
-This guide covers how to set up the development environment and build Handy from source across different platforms.
+Three ways to produce installers, depending on how much you want to own
+locally vs. let CI do the work.
 
-## Prerequisites
-
-### All Platforms
-
-- [Rust](https://rustup.rs/) (latest stable)
-- [Bun](https://bun.sh/) package manager
-- [Tauri Prerequisites](https://tauri.app/start/prerequisites/)
-
-### Platform-Specific Requirements
-
-#### macOS
-
-- Xcode Command Line Tools
-- Install with: `xcode-select --install`
-
-#### Windows
-
-- Microsoft C++ Build Tools
-- Visual Studio 2019/2022 with C++ development tools
-- Or Visual Studio Build Tools 2019/2022
-
-#### Linux
-
-- Build essentials
-- ALSA development libraries
-- Install with:
-
-  ```bash
-  # Ubuntu/Debian
-  sudo apt update
-  sudo apt install build-essential libasound2-dev pkg-config libssl-dev libvulkan-dev vulkan-tools glslc libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-layer-shell0 libgtk-layer-shell-dev patchelf cmake
-
-  # Fedora/RHEL
-  sudo dnf groupinstall "Development Tools"
-  sudo dnf install alsa-lib-devel pkgconf openssl-devel vulkan-devel \
-    gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel \
-    gtk-layer-shell gtk-layer-shell-devel \
-    cmake
-
-  # Arch Linux
-  sudo pacman -S base-devel alsa-lib pkgconf openssl vulkan-devel \
-    gtk3 webkit2gtk-4.1 libappindicator-gtk3 librsvg gtk-layer-shell \
-    cmake
-  ```
-
-## Setup Instructions
-
-### 1. Clone the Repository
-
-```bash
-git clone git@github.com:cjpais/Handy.git
-cd Handy
-```
-
-### 2. Install Dependencies
+## 1. Local dev loop (any platform)
 
 ```bash
 bun install
-```
-
-### 3. Start Dev Server
-
-```bash
 bun tauri dev
 ```
 
-### 4. Build for Production
+Starts the app with hot-reload for the frontend. First run pulls ~500 Rust
+crates and compiles whisper.cpp + ONNX Runtime — budget 15–20 min on first
+build, much faster after.
+
+## 2. Local release build (per-platform installer)
+
+You must build on the target OS — Tauri does **not** cleanly cross-compile
+because each platform links against its own native webview/audio/GUI stack.
+
+Shared prerequisites: `rustup` (stable), `bun`, and `cmake` (for whisper.cpp).
+
+### macOS (→ `.dmg`)
 
 ```bash
-bun run tauri build
+# Prereqs
+xcode-select --install           # Xcode CLT
+brew install cmake
+rustup target add aarch64-apple-darwin x86_64-apple-darwin  # whichever you build for
+
+# Build
+bun install
+bun run tauri build --bundles dmg
 ```
 
-This compiles a release binary and generates platform-specific bundles (deb, rpm, AppImage on Linux; dmg on macOS; msi on Windows).
+Output: `src-tauri/target/release/bundle/dmg/Lezat Transcript_<version>_aarch64.dmg`
 
-## Linux Install (from source)
+Apple Intelligence (the `@Generable` Swift macro path) only compiles under the
+**full Xcode**, not Command Line Tools. `build.rs` auto-stubs when CLT is
+detected; force it off explicitly with `LEZAT_AI_STUB=1`.
 
-The raw binary (`src-tauri/target/release/handy`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.
+Binary is ad-hoc signed. First launch on teammates' Macs needs
+**right-click → Open** to bypass Gatekeeper. For notarized builds you need a
+paid Apple Developer account — wire the signing identity into
+`src-tauri/tauri.conf.json`.
 
-**Install from the deb bundle** (works on any Linux distro):
+### Windows (→ `.msi`)
+
+```powershell
+# Prereqs (one-time)
+# 1. Visual Studio Build Tools 2022 with "Desktop development with C++"
+# 2. Rust: https://rustup.rs/
+# 3. Bun: https://bun.sh/
+# 4. CMake: https://cmake.org/download/  (add to PATH)
+# 5. Vulkan SDK 1.4.x: https://vulkan.lunarg.com/sdk/home#windows
+
+# Build
+bun install
+bun run tauri build --bundles msi
+```
+
+Output: `src-tauri\target\release\bundle\msi\Lezat Transcript_<version>_x64_en-US.msi`
+
+Installer is unsigned. Windows SmartScreen will warn on first run — "More
+info" → "Run anyway". For trusted installers you'll need Azure Trusted
+Signing or a code-signing certificate.
+
+### Linux (→ `.deb` / `.AppImage` / `.rpm`)
 
 ```bash
-cd /tmp
-ar x /path/to/Handy/src-tauri/target/release/bundle/deb/Handy_*_amd64.deb data.tar.gz
-tar xzf data.tar.gz
-sudo cp usr/bin/handy /usr/bin/
-sudo cp -r usr/lib/Handy /usr/lib/
-sudo cp -r usr/share/icons/hicolor/* /usr/share/icons/hicolor/
-sudo cp usr/share/applications/Handy.desktop /usr/share/applications/
+# Prereqs (Ubuntu/Debian)
+sudo apt update
+sudo apt install -y \
+    build-essential libasound2-dev pkg-config libssl-dev \
+    libvulkan-dev vulkan-tools glslc \
+    libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+    librsvg2-dev libgtk-layer-shell0 libgtk-layer-shell-dev \
+    patchelf cmake
+
+# Fedora/RHEL: see upstream `BUILD.md.handy-upstream-note` (same packages, dnf names)
+
+# Install Rust + Bun
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+curl -fsSL https://bun.sh/install | bash
+
+# Build
+bun install
+bun run tauri build --bundles deb          # or: appimage, rpm, "deb,appimage"
 ```
 
-After subsequent rebuilds, only the binary needs re-copying:
+Output: `src-tauri/target/release/bundle/deb/lezat-transcript_<version>_amd64.deb`
+
+Install with `sudo dpkg -i <file>.deb` (then `sudo apt-get -f install` if
+dependencies are missing).
+
+## 3. CI builds (all three platforms, no local setup)
+
+Push this repo to GitHub. The workflow at
+`.github/workflows/lezat-release.yml` builds macOS / Windows / Linux in
+parallel.
+
+**Two ways to trigger:**
 
 ```bash
-sudo cp src-tauri/target/release/handy /usr/bin/
+# Manual — produces artifacts you can download from the Actions run page
+gh workflow run lezat-release.yml
+
+# Tag push — also creates a draft GitHub Release with all three installers attached
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-Resources only need re-copying if they change upstream (new icons, sounds, etc.).
+The CI workflow produces **unsigned** binaries — no secrets required. For
+signed & notarized builds, wire in the upstream `build.yml`
+(`.github/workflows/build.yml`, currently inactive) and provide
+`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, and
+Azure Trusted Signing secrets via repo settings.
+
+### Workflows carried over from upstream Handy
+
+Files ending in `.handy-upstream` are the original Handy workflows, preserved
+for reference (code-quality checks, Nix builds, playwright tests, the full
+cross-platform signing pipeline). They don't fire under that extension. Rename
+back to `.yml` to re-enable any that fit Lezat's needs.
 
 ## Troubleshooting
 
-### AppImage build fails on Arch / rolling-release distros
+**`cmake: command not found`** — install cmake for your platform (brew, apt, or https://cmake.org).
 
-`linuxdeploy` bundles its own `strip` binary which is too old to process system libraries built with newer toolchains on rolling-release distros (Arch, CachyOS, Manjaro, EndeavourOS).
+**`'rustfmt' is not installed`** — `rustup component add rustfmt`.
 
-The error from Tauri:
+**macOS: swiftc error about `FoundationModelsMacros`** — you're on CLT without
+full Xcode. `build.rs` handles this automatically now; if you still see it,
+set `LEZAT_AI_STUB=1` before building.
 
-```
-Bundling Handy_*_amd64.AppImage
-failed to bundle project `failed to run linuxdeploy`
-```
+**Windows: MAX_PATH errors during whisper.cpp build** — set
+`CARGO_TARGET_DIR=C:\t` to shorten the path.
 
-Tauri swallows the real linuxdeploy error. To see it, run linuxdeploy manually:
-
-```bash
-cd src-tauri/target/release/bundle/appimage
-~/.cache/tauri/linuxdeploy-x86_64.AppImage --appimage-extract-and-run \
-  --appdir Handy.AppDir --plugin gtk --output appimage
-```
-
-**Workaround:** The binary, deb, and rpm bundles all build fine — only the AppImage step fails. To skip it:
-
-```bash
-bun run tauri build -- --bundles deb
-```
-
-Then install using the deb extraction method above.
+**Linux AppImage build fails on Arch/rolling-release distros** — known
+`linuxdeploy` issue with newer glibc. Build `.deb` instead and install from
+that.

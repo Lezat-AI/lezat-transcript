@@ -143,13 +143,41 @@ fn build_apple_intelligence_bridge() {
     // Check if the SDK supports FoundationModels (required for Apple Intelligence)
     let framework_path =
         Path::new(&sdk_path).join("System/Library/Frameworks/FoundationModels.framework");
-    let has_foundation_models = framework_path.exists();
+    let sdk_has_framework = framework_path.exists();
+
+    // The @Generable macro used by the real Swift file is a Swift macro that ships
+    // with the full Xcode toolchain (FoundationModelsMacros plugin). Command Line
+    // Tools alone don't include it, so swiftc fails to resolve the macro.
+    // Detect Xcode presence via `xcode-select -p` pointing at an .app bundle.
+    let developer_dir = String::from_utf8(
+        Command::new("xcode-select")
+            .args(["-p"])
+            .output()
+            .expect("Failed to invoke xcode-select")
+            .stdout,
+    )
+    .unwrap_or_default()
+    .trim()
+    .to_string();
+    let is_full_xcode = developer_dir.contains(".app/");
+
+    // Respect an explicit opt-out for CI or constrained environments.
+    let forced_stub = env::var("LEZAT_AI_STUB").ok().as_deref() == Some("1");
+
+    let has_foundation_models = sdk_has_framework && is_full_xcode && !forced_stub;
 
     let source_file = if has_foundation_models {
         println!("cargo:warning=Building with Apple Intelligence support.");
         REAL_SWIFT_FILE
     } else {
-        println!("cargo:warning=Apple Intelligence SDK not found. Building with stubs.");
+        let reason = if forced_stub {
+            "LEZAT_AI_STUB=1"
+        } else if !sdk_has_framework {
+            "SDK lacks FoundationModels.framework"
+        } else {
+            "full Xcode not found (Command Line Tools only — @Generable macro unavailable)"
+        };
+        println!("cargo:warning=Apple Intelligence disabled: {reason}. Building with stubs.");
         STUB_SWIFT_FILE
     };
 

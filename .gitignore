@@ -42,3 +42,10 @@ blob-report/
 
 # Nix build output
 result
+
+# Release artifacts (built locally — published via CI)
+*.dmg
+*.msi
+*.deb
+*.AppImage
+*.rpm

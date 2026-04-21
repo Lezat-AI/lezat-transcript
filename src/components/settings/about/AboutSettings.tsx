@@ -66,7 +66,7 @@ export const AboutSettings: React.FC = () => {
           <Button
             variant="secondary"
             size="md"
-            onClick={() => openUrl("https://github.com/cjpais/Handy")}
+            onClick={() => openUrl("https://github.com/cjpais/Handy")} // upstream; TODO replace with Lezat repo
           >
             {t("settings.about.sourceCode.button")}
           </Button>

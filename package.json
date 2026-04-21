@@ -1,5 +1,5 @@
 {
-  "name": "handy-app",
+  "name": "lezat-transcript",
   "private": true,
   "version": "0.8.2",
   "type": "module",
@@ -17,7 +17,7 @@
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "check:translations": "bun scripts/check-translations.ts",
-    "postinstall": "bun scripts/check-nix-deps.ts"
+    "postinstall": "true"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.16",
