@@ -165,11 +165,17 @@ jobs:
           files: ${{ matrix.updater-glob }}
           draft: true
 
-  # Compose latest.json from the uploaded updater artifacts and attach it to
-  # the release. Tauri's updater fetches this file and picks the platform key
-  # matching the user's OS/arch.
+  # Compose latest.json from whatever updater artifacts DID upload and
+  # attach it to the release. Tauri's updater fetches this file and picks
+  # the platform key matching the user's OS/arch.
+  #
+  # `if: always()` intentionally — if Windows breaks but Mac + Linux ship,
+  # Mac + Linux users should still be able to auto-update. A partial
+  # latest.json is strictly better than none at all. The compose script
+  # is defensive: it silently skips any platform whose updater artifact
+  # is missing.
   publish-updater-manifest:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -183,6 +189,10 @@ jobs:
         with:
           path: updater-artifacts
           pattern: updater-*
+          # Tolerate a matrix job failing — we still want to publish the
+          # platforms that did succeed. Defaults to true already but being
+          # explicit so the behaviour doesn't shift under us.
+          merge-multiple: false
 
       - name: Compose latest.json
         id: compose
@@ -229,19 +239,26 @@ jobs:
               platforms[key] = {"signature": sig, "url": bundle_url}
               print(f"{key} -> {bundle_files[0].name}")
 
-          manifest = {
-              "version": version,
-              "notes": f"Lezat Transcript {tag}",
-              "pub_date": pub_date,
-              "platforms": platforms,
-          }
-
-          pathlib.Path("latest.json").write_text(json.dumps(manifest, indent=2))
-          print("--- latest.json ---")
-          print(json.dumps(manifest, indent=2))
+          if not platforms:
+              print("No updater artifacts were produced for any platform — skipping latest.json upload.")
+              # Touch an empty file so the subsequent action-gh-release step's
+              # glob doesn't explode. The upload step's if-condition filters
+              # on this sentinel.
+              pathlib.Path(".skip_manifest").touch()
+          else:
+              manifest = {
+                  "version": version,
+                  "notes": f"Lezat Transcript {tag}",
+                  "pub_date": pub_date,
+                  "platforms": platforms,
+              }
+              pathlib.Path("latest.json").write_text(json.dumps(manifest, indent=2))
+              print("--- latest.json ---")
+              print(json.dumps(manifest, indent=2))
           PY
 
       - name: Attach latest.json to release
+        if: hashFiles('latest.json') != ''
         uses: softprops/action-gh-release@v2
         with:
           files: latest.json
