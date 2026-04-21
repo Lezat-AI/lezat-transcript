@@ -34,6 +34,8 @@ use crate::audio_toolkit::system_audio::{
     resolve_system_audio_device, SystemAudioSource, SystemAudioStatus,
 };
 use crate::audio_toolkit::{list_input_devices, AudioRecorder};
+#[cfg(target_os = "macos")]
+use crate::audio_toolkit::macos_native_audio::MacosNativeAudioRecorder;
 #[cfg(target_os = "windows")]
 use crate::audio_toolkit::wasapi_loopback::WasapiLoopbackRecorder;
 use crate::managers::transcription::TranscriptionManager;
@@ -47,6 +49,8 @@ enum SourceCapture {
     Cpal(AudioRecorder),
     #[cfg(target_os = "windows")]
     Wasapi(WasapiLoopbackRecorder),
+    #[cfg(target_os = "macos")]
+    MacosNative(MacosNativeAudioRecorder),
 }
 
 impl SourceCapture {
@@ -55,6 +59,8 @@ impl SourceCapture {
             SourceCapture::Cpal(r) => r.start(),
             #[cfg(target_os = "windows")]
             SourceCapture::Wasapi(r) => r.start().map_err(|e| e.into()),
+            #[cfg(target_os = "macos")]
+            SourceCapture::MacosNative(r) => r.start().map_err(|e| e.into()),
         }
     }
 
@@ -63,6 +69,8 @@ impl SourceCapture {
             SourceCapture::Cpal(r) => r.stop(),
             #[cfg(target_os = "windows")]
             SourceCapture::Wasapi(r) => r.stop().map_err(|e| e.into()),
+            #[cfg(target_os = "macos")]
+            SourceCapture::MacosNative(r) => r.stop().map_err(|e| e.into()),
         }
     }
 
@@ -71,6 +79,8 @@ impl SourceCapture {
             SourceCapture::Cpal(r) => r.close(),
             #[cfg(target_os = "windows")]
             SourceCapture::Wasapi(r) => r.close().map_err(|e| e.into()),
+            #[cfg(target_os = "macos")]
+            SourceCapture::MacosNative(r) => r.close().map_err(|e| e.into()),
         }
     }
 }
@@ -88,6 +98,13 @@ fn open_wasapi() -> Result<SourceCapture> {
     let mut r = WasapiLoopbackRecorder::new()?;
     r.open(None)?;
     Ok(SourceCapture::Wasapi(r))
+}
+
+#[cfg(target_os = "macos")]
+fn open_macos_native() -> Result<SourceCapture> {
+    let mut r = MacosNativeAudioRecorder::new()?;
+    r.open(None)?;
+    Ok(SourceCapture::MacosNative(r))
 }
 
 /// How much audio we buffer before handing it to Whisper.
@@ -416,9 +433,13 @@ impl MeetingManager {
                         SystemAudioSource::WasapiLoopback => open_wasapi(),
                         #[cfg(not(target_os = "windows"))]
                         SystemAudioSource::WasapiLoopback => {
-                            // Defensive: resolve_system_audio_device should never
-                            // return WasapiLoopback off Windows.
                             Err(anyhow!("WasapiLoopback requested on non-Windows build"))
+                        }
+                        #[cfg(target_os = "macos")]
+                        SystemAudioSource::MacosNative => open_macos_native(),
+                        #[cfg(not(target_os = "macos"))]
+                        SystemAudioSource::MacosNative => {
+                            Err(anyhow!("MacosNative requested on non-macOS build"))
                         }
                     };
                     match capture_result {

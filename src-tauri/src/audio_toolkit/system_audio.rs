@@ -28,14 +28,18 @@ use crate::audio_toolkit::list_input_devices;
 
 /// How we'll actually read samples once a source is "Available".
 ///
-/// - `CpalDevice` wraps a regular cpal input device (used for the macOS
-///   BlackHole path and the Linux PulseAudio monitor source).
+/// - `CpalDevice` wraps a regular cpal input device (the macOS BlackHole
+///   fall-back and the Linux PulseAudio monitor source).
 /// - `WasapiLoopback` means "use the dedicated WASAPI loopback recorder";
 ///   no device handle is needed because the recorder always targets the
 ///   current default render endpoint.
+/// - `MacosNative` means "use the ScreenCaptureKit-based native recorder".
+///   Preferred on macOS 13+ because it doesn't need BlackHole. Only emitted
+///   by `resolve_macos` when the Swift bridge reports supported.
 pub enum SystemAudioSource {
     CpalDevice(Device),
     WasapiLoopback,
+    MacosNative,
 }
 
 pub enum SystemAudioStatus {
@@ -69,6 +73,18 @@ pub fn resolve_system_audio_device() -> SystemAudioStatus {
 
 #[cfg(target_os = "macos")]
 fn resolve_macos() -> SystemAudioStatus {
+    // Prefer the ScreenCaptureKit-backed native path when the Swift bridge
+    // is available — no BlackHole install, no Multi-Output Device fiddling.
+    // The Rust wrapper probes the Swift runtime check so CLT-only builds
+    // (stubbed Swift) report unsupported and we fall through.
+    use crate::audio_toolkit::macos_native_audio::native_system_audio_supported;
+    if native_system_audio_supported() {
+        return SystemAudioStatus::Available {
+            source: SystemAudioSource::MacosNative,
+            label: "macOS ScreenCaptureKit (system audio)".to_string(),
+        };
+    }
+
     let devices = match list_input_devices() {
         Ok(v) => v,
         Err(_) => {

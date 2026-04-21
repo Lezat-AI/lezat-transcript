@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Request microphone access to transcribe audio locally</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Lezat Transcript needs Screen Recording permission to capture the other side of a call's audio during Meeting Mode. Only audio is read — nothing is saved about your screen.</string>
 </dict>
 </plist>

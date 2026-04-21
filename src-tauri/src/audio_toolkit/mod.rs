@@ -1,5 +1,7 @@
 pub mod audio;
 pub mod constants;
+#[cfg(target_os = "macos")]
+pub mod macos_native_audio;
 pub mod system_audio;
 pub mod text;
 pub mod utils;
