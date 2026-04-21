@@ -1,10 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink } from "lucide-react";
+import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink, Save } from "lucide-react";
 import { commands } from "@/bindings";
 import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
+import { AudioPlayer } from "../ui/AudioPlayer";
+
+function meetingAudioSources(audioPath: string | null): { label: string; url: string }[] {
+  if (!audioPath) return [];
+  // Audio path is a directory holding mic.wav and optionally system.wav.
+  const join = (a: string, b: string) => (a.endsWith("/") ? a + b : a + "/" + b);
+  return [
+    { label: "Microphone (YOU)", url: convertFileSrc(join(audioPath, "mic.wav")) },
+    { label: "System audio (THEM)", url: convertFileSrc(join(audioPath, "system.wav")) },
+  ];
+}
 
 // Event names are generated from the Rust struct names (kebab-case).
 const EVT_CHUNK = "meeting-transcript-chunk-event";
@@ -40,6 +52,7 @@ function formatStartedAt(ts: number): string {
 export function MeetingsPage() {
   const { settings, updateSetting } = useSettings();
   const captureSystemAudio = settings?.capture_system_audio ?? false;
+  const saveMeetingAudio = settings?.save_meeting_audio ?? false;
 
   const [activeId, setActiveId] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -202,6 +215,16 @@ export function MeetingsPage() {
     }
   };
 
+  const handleToggleSaveAudio = async () => {
+    const next = !saveMeetingAudio;
+    try {
+      await commands.changeSaveMeetingAudioSetting(next);
+      updateSetting("save_meeting_audio", next);
+    } catch (e) {
+      console.warn("changeSaveMeetingAudioSetting failed", e);
+    }
+  };
+
   const renderSystemAudioStatus = () => {
     if (!sysAudio) return null;
     if (sysAudio.state === "available") {
@@ -286,24 +309,40 @@ export function MeetingsPage() {
           )}
         </div>
 
-        {/* System-audio toggle + status */}
-        <div className="flex items-start gap-3 pt-1 border-t border-mid-gray/15 mt-1 pt-3">
-          <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+        {/* Capture + persistence toggles */}
+        <div className="flex flex-col gap-2 pt-3 border-t border-mid-gray/15">
+          <div className="flex items-start gap-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+              <input
+                type="checkbox"
+                checked={captureSystemAudio}
+                onChange={handleToggleSystemAudio}
+                className="accent-lezat-sage"
+                disabled={activeId !== null}
+              />
+              <span className="inline-flex items-center gap-1.5 text-sm">
+                <Speaker className="w-4 h-4" />
+                Also capture the other side of the call
+              </span>
+            </label>
+            <div className="flex-1 min-w-0 pt-0.5">
+              {captureSystemAudio && renderSystemAudioStatus()}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm">
             <input
               type="checkbox"
-              checked={captureSystemAudio}
-              onChange={handleToggleSystemAudio}
+              checked={saveMeetingAudio}
+              onChange={handleToggleSaveAudio}
               className="accent-lezat-sage"
               disabled={activeId !== null}
             />
-            <span className="inline-flex items-center gap-1.5 text-sm">
-              <Speaker className="w-4 h-4" />
-              Also capture the other side of the call
+            <Save className="w-4 h-4" />
+            <span>Save meeting audio to disk</span>
+            <span className="text-xs text-mid-gray">
+              (opt-in — a 45-min meeting is ~80 MB per source)
             </span>
           </label>
-          <div className="flex-1 min-w-0 pt-0.5">
-            {captureSystemAudio && renderSystemAudioStatus()}
-          </div>
         </div>
 
         {error && (
@@ -371,6 +410,23 @@ export function MeetingsPage() {
               <span className="italic text-mid-gray">(no transcript)</span>
             )}
           </div>
+
+          {viewing.audio_path && (
+            <div className="flex flex-col gap-2 pt-2 border-t border-mid-gray/15">
+              <h4 className="text-xs font-bold uppercase tracking-wide text-mid-gray">
+                Audio
+              </h4>
+              {meetingAudioSources(viewing.audio_path).map((s) => (
+                <div key={s.label} className="flex items-center gap-3">
+                  <span className="text-xs text-mid-gray w-40 shrink-0">
+                    {s.label}
+                  </span>
+                  <AudioPlayer src={s.url} className="flex-1" />
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={() =>

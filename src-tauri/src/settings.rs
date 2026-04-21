@@ -360,10 +360,15 @@ pub struct AppSettings {
     /// Meeting Mode: also capture system audio (the other side of a call).
     /// Implementation is platform-specific:
     ///  - macOS : requires BlackHole 2ch installed + used as an extra input
-    ///  - Windows : WASAPI loopback (TODO, not yet implemented)
+    ///  - Windows : WASAPI loopback (zero install)
     ///  - Linux  : default PulseAudio/PipeWire monitor source
     #[serde(default)]
     pub capture_system_audio: bool,
+    /// Meeting Mode: persist the raw audio alongside the transcript so users
+    /// can replay or re-transcribe with a different model later. Off by
+    /// default because a 45-min meeting at 16 kHz mono is ~80 MB per source.
+    #[serde(default)]
+    pub save_meeting_audio: bool,
     #[serde(default)]
     pub selected_output_device: Option<String>,
     #[serde(default = "default_translate_to_english")]
@@ -783,6 +788,7 @@ pub fn get_default_settings() -> AppSettings {
         selected_model: "".to_string(),
         always_on_microphone: false,
         capture_system_audio: false,
+        save_meeting_audio: false,
         selected_microphone: None,
         clamshell_microphone: None,
         selected_output_device: None,

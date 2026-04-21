@@ -27,6 +27,9 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
+use hound::{SampleFormat, WavSpec, WavWriter};
+use std::fs;
+
 use crate::audio_toolkit::system_audio::{
     resolve_system_audio_device, SystemAudioSource, SystemAudioStatus,
 };
@@ -217,6 +220,15 @@ impl MeetingsStore {
         Ok(())
     }
 
+    pub fn set_audio_path(&self, meeting_id: i64, path: &str) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE meetings SET audio_path = ?1 WHERE id = ?2",
+            params![path, meeting_id],
+        )?;
+        Ok(())
+    }
+
     pub fn list(&self, limit: usize) -> Result<Vec<MeetingRecord>> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
@@ -240,8 +252,29 @@ impl MeetingsStore {
     }
 
     pub fn delete(&self, id: i64) -> Result<()> {
+        // Fetch audio_path first so we can clean up the directory on disk
+        // alongside the database row.
+        let audio_path: Option<String> = self
+            .conn()?
+            .query_row(
+                "SELECT audio_path FROM meetings WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+
         let conn = self.conn()?;
         conn.execute("DELETE FROM meetings WHERE id = ?1", params![id])?;
+
+        if let Some(p) = audio_path {
+            let path = std::path::Path::new(&p);
+            if path.is_dir() {
+                let _ = std::fs::remove_dir_all(path);
+            } else if path.is_file() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
         Ok(())
     }
 }
@@ -292,6 +325,22 @@ impl MeetingManager {
         let title = title.unwrap_or_else(|| default_title(started_at));
         let id = self.store.insert(&title, started_at)?;
 
+        // Prep a per-meeting directory for raw WAV files, iff audio persistence
+        // is enabled. Store the path on the meeting record so the UI can resolve
+        // playback files later.
+        let audio_dir = if settings.save_meeting_audio {
+            let dir = portable::app_data_dir(&self.app)
+                .map_err(|e| anyhow!("Failed to resolve app data dir: {e}"))?
+                .join("meetings")
+                .join(id.to_string());
+            fs::create_dir_all(&dir)
+                .map_err(|e| anyhow!("Failed to create meeting audio dir: {e}"))?;
+            self.store.set_audio_path(id, dir.to_string_lossy().as_ref())?;
+            Some(dir)
+        } else {
+            None
+        };
+
         let stop_flag = Arc::new(AtomicBool::new(false));
         let mut handles = Vec::new();
 
@@ -299,6 +348,7 @@ impl MeetingManager {
         let mic_device = resolve_mic_device(&settings);
         let mic_capture = open_cpal(mic_device)
             .map_err(|e| anyhow!("Failed to open mic capture: {e}"))?;
+        let mic_wav_path = audio_dir.as_ref().map(|d| d.join("mic.wav"));
         handles.push(spawn_recording_loop(
             self.app.clone(),
             self.store.clone(),
@@ -306,6 +356,7 @@ impl MeetingManager {
             stop_flag.clone(),
             "mic".to_string(),
             mic_capture,
+            mic_wav_path,
         )?);
 
         // Optionally spawn the system-audio loop.
@@ -325,14 +376,19 @@ impl MeetingManager {
                         }
                     };
                     match capture_result {
-                        Ok(capture) => handles.push(spawn_recording_loop(
-                            self.app.clone(),
-                            self.store.clone(),
-                            id,
-                            stop_flag.clone(),
-                            "system".to_string(),
-                            capture,
-                        )?),
+                        Ok(capture) => {
+                            let sys_wav_path =
+                                audio_dir.as_ref().map(|d| d.join("system.wav"));
+                            handles.push(spawn_recording_loop(
+                                self.app.clone(),
+                                self.store.clone(),
+                                id,
+                                stop_flag.clone(),
+                                "system".to_string(),
+                                capture,
+                                sys_wav_path,
+                            )?)
+                        }
                         Err(e) => {
                             warn!("Meeting {id}: failed to open system-audio capture — {e}");
                             let _ = (MeetingStateEvent::Error {
@@ -448,13 +504,20 @@ fn spawn_recording_loop(
     stop_flag: Arc<AtomicBool>,
     source: String,
     capture: SourceCapture,
+    wav_path: Option<PathBuf>,
 ) -> Result<JoinHandle<()>> {
     let handle = thread::Builder::new()
         .name(format!("meeting-{meeting_id}-{source}"))
         .spawn(move || {
-            if let Err(e) =
-                run_recording_loop(&app, &store, meeting_id, &stop_flag, &source, capture)
-            {
+            if let Err(e) = run_recording_loop(
+                &app,
+                &store,
+                meeting_id,
+                &stop_flag,
+                &source,
+                capture,
+                wav_path,
+            ) {
                 error!("Meeting {meeting_id} [{source}] recording loop failed: {e}");
                 let _ = (MeetingStateEvent::Error {
                     meeting_id: Some(meeting_id),
@@ -473,8 +536,33 @@ fn run_recording_loop(
     stop_flag: &Arc<AtomicBool>,
     source: &str,
     mut recorder: SourceCapture,
+    wav_path: Option<PathBuf>,
 ) -> Result<()> {
     info!("Meeting {meeting_id} [{source}]: recorder opened, starting capture loop");
+
+    // Open the WAV writer lazily so the file isn't created if we never capture
+    // a valid chunk. Whisper's sample rate is 16 kHz mono.
+    let mut wav_writer: Option<WavWriter<std::io::BufWriter<std::fs::File>>> = None;
+    if let Some(path) = wav_path.as_ref() {
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        match WavWriter::create(path, spec) {
+            Ok(w) => {
+                info!(
+                    "Meeting {meeting_id} [{source}]: persisting audio to {}",
+                    path.display()
+                );
+                wav_writer = Some(w);
+            }
+            Err(e) => warn!(
+                "Meeting {meeting_id} [{source}]: failed to open WAV writer: {e}"
+            ),
+        }
+    }
 
     let chunk_start = Instant::now();
     let mut offset_ms_at_chunk_start: u64 = 0;
@@ -516,6 +604,23 @@ fn run_recording_loop(
                 thread::sleep(CHUNK_ROLLOVER_PAUSE);
             }
             continue;
+        }
+
+        // Persist to the per-source WAV if audio saving is enabled. Convert
+        // f32 samples in [-1, 1] to signed 16-bit PCM with clipping. Samples
+        // lost between stop() and restart() (the ~30 ms rollover) aren't
+        // written — the saved audio will have brief gaps at chunk boundaries.
+        if let Some(w) = wav_writer.as_mut() {
+            for &s in &samples {
+                let clamped = s.max(-1.0).min(1.0);
+                let pcm = (clamped * i16::MAX as f32) as i16;
+                if let Err(e) = w.write_sample(pcm) {
+                    warn!(
+                        "Meeting {meeting_id} [{source}]: WAV write failed: {e}"
+                    );
+                    break;
+                }
+            }
         }
 
         // Transcribe on THIS thread (one chunk at a time per source). The
@@ -561,6 +666,13 @@ fn run_recording_loop(
     }
 
     let _ = recorder.close();
+    if let Some(w) = wav_writer.take() {
+        if let Err(e) = w.finalize() {
+            warn!(
+                "Meeting {meeting_id} [{source}]: failed to finalize WAV: {e}"
+            );
+        }
+    }
     info!("Meeting {meeting_id} [{source}]: recording loop exited cleanly");
     Ok(())
 }
