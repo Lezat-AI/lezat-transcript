@@ -154,9 +154,29 @@ impl Drop for MacosNativeAudioRecorder {
     }
 }
 
-fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, native_rate: u32) {
+fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, initial_rate: u32) {
     let mut scratch = vec![0f32; POLL_CHUNK_SAMPLES];
+    let mut cached_rate = initial_rate;
+    let mut first_sample_logged = false;
+    let mut ticks_since_rate_check: u32 = 0;
+
     while !stop_flag.load(Ordering::SeqCst) {
+        // Re-read the native rate once a second — ScreenCaptureKit sets it
+        // only when the first real audio buffer arrives, which can be after
+        // we've already opened. Cheap FFI call so checking regularly is fine.
+        ticks_since_rate_check += 1;
+        if ticks_since_rate_check >= 50 {
+            ticks_since_rate_check = 0;
+            let r = unsafe { lezat_sysaudio_sample_rate() };
+            if r > 0 && (r as u32) != cached_rate {
+                info!(
+                    "Native system audio: rate updated {cached_rate} -> {}",
+                    r
+                );
+                cached_rate = r as u32;
+            }
+        }
+
         let mut out_len: i32 = 0;
         let rc = unsafe {
             lezat_sysaudio_drain(
@@ -176,11 +196,18 @@ fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, native_ra
             continue;
         }
 
+        if !first_sample_logged {
+            info!(
+                "Native system audio: first {n} samples arrived at {cached_rate} Hz"
+            );
+            first_sample_logged = true;
+        }
+
         let raw = &scratch[..n];
-        let resampled = if native_rate == WHISPER_SR {
+        let resampled = if cached_rate == WHISPER_SR {
             raw.to_vec()
         } else {
-            linear_resample_to_16k(raw, native_rate)
+            linear_resample_to_16k(raw, cached_rate)
         };
 
         if let Ok(mut guard) = inner.lock() {

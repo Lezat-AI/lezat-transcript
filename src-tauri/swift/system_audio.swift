@@ -84,12 +84,18 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 
         let newStream = SCStream(filter: filter, configuration: config, delegate: self)
         try newStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: nil)
-        try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: nil)
+        // Video output intentionally omitted. SCStream works audio-only when
+        // capturesAudio is set on the config; adding an unconsumed screen
+        // output handler can stall the stream because CMSampleBuffers held
+        // alive by the handler back-pressure the audio side.
         try await newStream.startCapture()
+
+        NSLog("LezatSystemAudio: SCStream.startCapture() succeeded")
 
         withLockSync {
             self.stream = newStream
             self.isRunning = true
+            // Tentative — will be overwritten by the first real sample buffer.
             self.captureSampleRate = Double(config.sampleRate)
         }
     }
@@ -145,7 +151,19 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
         }
 
         let channels = Int(asbd.mChannelsPerFrame)
-        if channels == 0 { return }
+        let actualRate = asbd.mSampleRate
+        if channels == 0 || actualRate <= 0 { return }
+
+        // Refresh the cached sample rate from the first real buffer — the
+        // config value we passed in is only a hint; ScreenCaptureKit can
+        // deliver a different rate. Rust side reads this to know how to
+        // resample to 16 kHz for Whisper.
+        lock.lock()
+        if abs(captureSampleRate - actualRate) > 1 {
+            NSLog("LezatSystemAudio: first buffer — rate=\(actualRate)Hz, ch=\(channels)")
+            captureSampleRate = actualRate
+        }
+        lock.unlock()
 
         // Grab the interleaved float buffer out of the CMSampleBuffer.
         var blockBuffer: CMBlockBuffer?
