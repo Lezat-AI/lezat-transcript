@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, Cpu, Video } from "lucide-react";
+import { Cog, FlaskConical, Heart, History, Info, Sparkles, Cpu, Video } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
@@ -14,6 +14,7 @@ import {
   ModelsSettings,
 } from "./settings";
 import MeetingsPage from "./meetings/MeetingsPage";
+import AcknowledgmentsPage from "./acknowledgments/AcknowledgmentsPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -79,6 +80,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.about",
     icon: Info,
     component: AboutSettings,
+    enabled: () => true,
+  },
+  acknowledgments: {
+    labelKey: "sidebar.acknowledgments",
+    icon: Heart,
+    component: AcknowledgmentsPage,
     enabled: () => true,
   },
 } as const satisfies Record<string, SectionConfig>;
