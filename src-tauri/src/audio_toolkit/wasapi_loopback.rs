@@ -14,10 +14,9 @@
 
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use wasapi::{
     get_default_device, initialize_mta, Direction, SampleType, StreamMode, WaveFormat,
 };
@@ -177,7 +176,7 @@ fn run_worker(cmd_rx: Receiver<Cmd>, ready_tx: mpsc::SyncSender<Result<()>>) {
             continue;
         }
 
-        let frames = match capture_client.get_next_nbr_frames() {
+        let frames = match capture_client.get_next_packet_size() {
             Ok(Some(n)) if n > 0 => n,
             Ok(_) => continue,
             Err(e) => {
@@ -231,8 +230,8 @@ fn init_stream() -> Result<StreamSetup> {
         .map_err(|e| anyhow!("get_mixformat failed: {e:?}"))?;
 
     let (def_period, _min_period) = audio_client
-        .get_periods()
-        .map_err(|e| anyhow!("get_periods failed: {e:?}"))?;
+        .get_device_period()
+        .map_err(|e| anyhow!("get_device_period failed: {e:?}"))?;
 
     // wasapi 0.18 replaced the (share_mode + period + loopback) params with a
     // single StreamMode. EventsShared gives us a signalled handle we can wait

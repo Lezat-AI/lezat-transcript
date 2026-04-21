@@ -23,6 +23,7 @@
 
 use cpal::Device;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::audio_toolkit::list_input_devices;
 
 /// How we'll actually read samples once a source is "Available".
