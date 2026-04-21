@@ -528,9 +528,9 @@
         "button": "View on GitHub"
       },
       "supportDevelopment": {
-        "title": "Support Development",
-        "description": "Help us continue building Lezat Transcript",
-        "button": "Donate"
+        "title": "Support upstream Handy",
+        "description": "Lezat Transcript is a fork of Handy — this button opens Handy's donation page so you can support the project that does the heavy lifting. (This is not a donation to Lezat.)",
+        "button": "Donate to Handy"
       },
       "acknowledgments": {
         "title": "Acknowledgments",

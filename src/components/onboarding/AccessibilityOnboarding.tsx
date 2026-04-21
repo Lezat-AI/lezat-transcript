@@ -41,10 +41,16 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     accessibility: "checking",
     microphone: "checking",
   });
+  /// Becomes true after ~12 s of being stuck in `waiting` for accessibility.
+  /// Signals the typical stale-TCC-entry case (ad-hoc-signed reinstall) so the
+  /// UI can surface a helpful hint + retry, instead of hanging silently.
+  const [stalenessSuspected, setStalenessSuspected] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorCountRef = useRef<number>(0);
   const MAX_POLLING_ERRORS = 3;
+  const STALE_HINT_MS = 12_000;
 
   const isMacOS = permissionPlatform === "macos";
   const isWindows = permissionPlatform === "windows";
@@ -244,17 +250,97 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
+      if (staleTimerRef.current) {
+        clearTimeout(staleTimerRef.current);
+      }
     };
   }, []);
 
+  // Clear the "stale" hint as soon as accessibility is actually granted.
+  useEffect(() => {
+    if (permissions.accessibility === "granted") {
+      setStalenessSuspected(false);
+      if (staleTimerRef.current) {
+        clearTimeout(staleTimerRef.current);
+        staleTimerRef.current = null;
+      }
+    }
+  }, [permissions.accessibility]);
+
+  const armStaleHintTimer = () => {
+    if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
+    setStalenessSuspected(false);
+    staleTimerRef.current = setTimeout(() => {
+      setStalenessSuspected(true);
+    }, STALE_HINT_MS);
+  };
+
   const handleGrantAccessibility = async () => {
     try {
+      // Short-circuit: macOS sometimes holds a stale TCC entry for the
+      // previous binary. If accessibility is already granted at the moment
+      // the user clicks, skip the prompt and proceed.
+      const alreadyGranted = await checkAccessibilityPermission();
+      if (alreadyGranted) {
+        try {
+          await Promise.all([
+            commands.initializeEnigo(),
+            commands.initializeShortcuts(),
+          ]);
+        } catch (e) {
+          console.warn("Initialize after short-circuit failed:", e);
+        }
+        setPermissions((prev) => ({ ...prev, accessibility: "granted" }));
+        return;
+      }
+
       await requestAccessibilityPermission();
       setPermissions((prev) => ({ ...prev, accessibility: "waiting" }));
+      armStaleHintTimer();
       startPolling();
     } catch (error) {
       console.error("Failed to request accessibility permission:", error);
       toast.error(t("onboarding.permissions.errors.requestFailed"));
+    }
+  };
+
+  /// Manual retry used from the "still waiting?" escape hatch. Re-checks
+  /// the real system state and unsticks the UI when the user has fixed
+  /// a stale TCC entry but the polling hasn't flipped yet.
+  const handleRetryAccessibility = async () => {
+    try {
+      const granted = await checkAccessibilityPermission();
+      if (granted) {
+        try {
+          await Promise.all([
+            commands.initializeEnigo(),
+            commands.initializeShortcuts(),
+          ]);
+        } catch (e) {
+          console.warn("Initialize after retry failed:", e);
+        }
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+        if (staleTimerRef.current) {
+          clearTimeout(staleTimerRef.current);
+          staleTimerRef.current = null;
+        }
+        setStalenessSuspected(false);
+        setPermissions((prev) => ({ ...prev, accessibility: "granted" }));
+      } else {
+        // Still not granted — let the user know so they open the right pane.
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+        setStalenessSuspected(false);
+        setPermissions((prev) => ({ ...prev, accessibility: "needed" }));
+      }
+    } catch (error) {
+      console.error("Retry check failed:", error);
+      toast.error(t("onboarding.permissions.errors.checkFailed"));
     }
   };
 
@@ -380,9 +466,31 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     {t("onboarding.permissions.granted")}
                   </div>
                 ) : permissions.accessibility === "waiting" ? (
-                  <div className="flex items-center gap-2 text-text/50 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {t("onboarding.permissions.waiting")}
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-text/50 text-sm">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {t("onboarding.permissions.waiting")}
+                    </div>
+                    {stalenessSuspected && (
+                      <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-text/80 leading-relaxed">
+                        <p className="font-medium text-amber-500 mb-1">
+                          Still waiting — this usually means macOS has a stale
+                          entry from a previous install.
+                        </p>
+                        <p className="mb-2">
+                          Open <span className="font-mono">System Settings →
+                          Privacy &amp; Security → Accessibility</span>, remove
+                          any existing "Lezat Transcript" entry (the minus
+                          button), then click Retry below.
+                        </p>
+                        <button
+                          onClick={handleRetryAccessibility}
+                          className="px-3 py-1.5 rounded bg-lezat-sage text-[#0d0d1a] text-xs font-medium hover:opacity-90"
+                        >
+                          Retry detection
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <button
