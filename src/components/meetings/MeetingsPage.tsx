@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Mic, Square, Trash2, Loader2 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink } from "lucide-react";
 import { commands } from "@/bindings";
-import type { MeetingRecord, MeetingChunk } from "@/bindings";
+import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bindings";
+import { useSettings } from "@/hooks/useSettings";
 
 // Event names are generated from the Rust struct names (kebab-case).
 const EVT_CHUNK = "meeting-transcript-chunk-event";
@@ -36,6 +38,9 @@ function formatStartedAt(ts: number): string {
 }
 
 export function MeetingsPage() {
+  const { settings, updateSetting } = useSettings();
+  const captureSystemAudio = settings?.capture_system_audio ?? false;
+
   const [activeId, setActiveId] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [liveChunks, setLiveChunks] = useState<MeetingChunk[]>([]);
@@ -43,6 +48,7 @@ export function MeetingsPage() {
   const [viewing, setViewing] = useState<MeetingRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sysAudio, setSysAudio] = useState<SystemAudioAvailability | null>(null);
 
   const elapsedStart = useRef<number | null>(null);
   const liveEndRef = useRef<HTMLDivElement | null>(null);
@@ -71,6 +77,20 @@ export function MeetingsPage() {
       refreshList();
     })();
   }, [refreshList]);
+
+  // Probe the system-audio capture path (BlackHole on macOS, WASAPI on Windows
+  // once wired, PulseAudio monitor on Linux) so we can show a helpful status.
+  // Re-probe when the user toggles the setting — e.g. they just installed
+  // BlackHole and want to see it go green.
+  useEffect(() => {
+    let active = true;
+    commands.getSystemAudioAvailability().then((s) => {
+      if (active) setSysAudio(s);
+    });
+    return () => {
+      active = false;
+    };
+  }, [captureSystemAudio]);
 
   // Elapsed timer tick.
   useEffect(() => {
@@ -172,10 +192,49 @@ export function MeetingsPage() {
     if (res.status === "ok" && res.data) setViewing(res.data);
   };
 
-  const liveTranscriptText = useMemo(
-    () => liveChunks.map((c) => c.text).join(" "),
-    [liveChunks]
-  );
+  const handleToggleSystemAudio = async () => {
+    const next = !captureSystemAudio;
+    try {
+      await commands.changeCaptureSystemAudioSetting(next);
+      updateSetting("capture_system_audio", next);
+    } catch (e) {
+      console.warn("changeCaptureSystemAudioSetting failed", e);
+    }
+  };
+
+  const renderSystemAudioStatus = () => {
+    if (!sysAudio) return null;
+    if (sysAudio.state === "available") {
+      return (
+        <div className="text-xs text-lezat-sage flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-lezat-sage" />
+          Captured via <span className="font-medium">{sysAudio.label}</span>
+        </div>
+      );
+    }
+    if (sysAudio.state === "not_configured") {
+      return (
+        <div className="text-xs text-amber-500 leading-relaxed">
+          {sysAudio.install_hint}
+          {sysAudio.install_hint.includes("https://") && (
+            <button
+              onClick={() =>
+                openUrl(
+                  sysAudio.install_hint.match(/https?:\/\/\S+/)?.[0] ?? ""
+                )
+              }
+              className="ml-1 inline-flex items-center gap-1 underline"
+            >
+              open link <ExternalLink className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className="text-xs text-mid-gray italic">{sysAudio.message}</div>
+    );
+  };
 
   return (
     <div className="w-full max-w-3xl flex flex-col gap-6">
@@ -227,6 +286,26 @@ export function MeetingsPage() {
           )}
         </div>
 
+        {/* System-audio toggle + status */}
+        <div className="flex items-start gap-3 pt-1 border-t border-mid-gray/15 mt-1 pt-3">
+          <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+            <input
+              type="checkbox"
+              checked={captureSystemAudio}
+              onChange={handleToggleSystemAudio}
+              className="accent-lezat-sage"
+              disabled={activeId !== null}
+            />
+            <span className="inline-flex items-center gap-1.5 text-sm">
+              <Speaker className="w-4 h-4" />
+              Also capture the other side of the call
+            </span>
+          </label>
+          <div className="flex-1 min-w-0 pt-0.5">
+            {captureSystemAudio && renderSystemAudioStatus()}
+          </div>
+        </div>
+
         {error && (
           <div className="text-sm text-red-500 border border-red-500/30 bg-red-500/5 rounded p-2">
             {error}
@@ -240,14 +319,29 @@ export function MeetingsPage() {
           <h3 className="text-sm font-bold uppercase tracking-wide text-mid-gray">
             Live Transcript
           </h3>
-          <div className="max-h-80 overflow-y-auto text-sm leading-relaxed whitespace-pre-wrap">
+          <div className="max-h-80 overflow-y-auto text-sm leading-relaxed flex flex-col gap-2">
             {liveChunks.length === 0 ? (
               <p className="text-mid-gray italic">
                 Listening… the first line usually appears after ~12 seconds of
                 audio.
               </p>
             ) : (
-              liveTranscriptText
+              liveChunks.map((c, i) => (
+                <div key={i} className="flex gap-2">
+                  <span
+                    className={
+                      "shrink-0 text-[9px] font-bold tracking-widest uppercase py-0.5 px-1.5 rounded " +
+                      (c.source === "system"
+                        ? "bg-lezat-sage/20 text-lezat-sage"
+                        : "bg-logo-primary/15 text-logo-primary")
+                    }
+                    title={c.source === "system" ? "Other side of the call" : "Your microphone"}
+                  >
+                    {c.source === "system" ? "THEM" : "YOU"}
+                  </span>
+                  <span className="flex-1 whitespace-pre-wrap">{c.text}</span>
+                </div>
+              ))
             )}
             <div ref={liveEndRef} />
           </div>

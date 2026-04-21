@@ -357,6 +357,13 @@ pub struct AppSettings {
     pub selected_microphone: Option<String>,
     #[serde(default)]
     pub clamshell_microphone: Option<String>,
+    /// Meeting Mode: also capture system audio (the other side of a call).
+    /// Implementation is platform-specific:
+    ///  - macOS : requires BlackHole 2ch installed + used as an extra input
+    ///  - Windows : WASAPI loopback (TODO, not yet implemented)
+    ///  - Linux  : default PulseAudio/PipeWire monitor source
+    #[serde(default)]
+    pub capture_system_audio: bool,
     #[serde(default)]
     pub selected_output_device: Option<String>,
     #[serde(default = "default_translate_to_english")]
@@ -775,6 +782,7 @@ pub fn get_default_settings() -> AppSettings {
         update_checks_enabled: default_update_checks_enabled(),
         selected_model: "".to_string(),
         always_on_microphone: false,
+        capture_system_audio: false,
         selected_microphone: None,
         clamshell_microphone: None,
         selected_output_device: None,

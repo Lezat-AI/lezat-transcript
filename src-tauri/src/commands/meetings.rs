@@ -2,9 +2,37 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use tauri::{AppHandle, Manager, State};
 
+use crate::audio_toolkit::system_audio::{resolve_system_audio_device, SystemAudioStatus};
 use crate::managers::meeting::{MeetingManager, MeetingRecord};
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(tag = "state")]
+pub enum SystemAudioAvailability {
+    #[serde(rename = "available")]
+    Available { label: String },
+    #[serde(rename = "not_configured")]
+    NotConfigured { install_hint: String },
+    #[serde(rename = "not_yet_supported")]
+    NotYetSupported { message: String },
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_system_audio_availability() -> SystemAudioAvailability {
+    match resolve_system_audio_device() {
+        SystemAudioStatus::Available { label, .. } => SystemAudioAvailability::Available { label },
+        SystemAudioStatus::NotConfigured { install_hint } => {
+            SystemAudioAvailability::NotConfigured { install_hint }
+        }
+        SystemAudioStatus::NotYetSupported { message } => {
+            SystemAudioAvailability::NotYetSupported { message }
+        }
+    }
+}
 
 #[tauri::command]
 #[specta::specta]

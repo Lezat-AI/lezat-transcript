@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
+use crate::audio_toolkit::system_audio::{resolve_system_audio_device, SystemAudioStatus};
 use crate::audio_toolkit::{list_input_devices, AudioRecorder};
 use crate::managers::transcription::TranscriptionManager;
 use crate::portable;
@@ -195,7 +196,8 @@ struct ActiveMeeting {
     id: i64,
     started: Instant,
     stop_flag: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
+    /// One thread per capture source (mic, optionally system audio).
+    handles: Vec<JoinHandle<()>>,
 }
 
 pub struct MeetingManager {
@@ -228,23 +230,69 @@ impl MeetingManager {
             return Err(anyhow!("Meeting already in progress (id={})", active.id));
         }
 
+        let settings = get_settings(&self.app);
         let started_at = Utc::now().timestamp();
         let title = title.unwrap_or_else(|| default_title(started_at));
         let id = self.store.insert(&title, started_at)?;
 
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let handle = spawn_recording_loop(
+        let mut handles = Vec::new();
+
+        // Always spawn the microphone loop.
+        let mic_device = resolve_mic_device(&settings);
+        handles.push(spawn_recording_loop(
             self.app.clone(),
             self.store.clone(),
             id,
             stop_flag.clone(),
-        )?;
+            "mic".to_string(),
+            mic_device,
+        )?);
+
+        // Optionally spawn the system-audio loop.
+        if settings.capture_system_audio {
+            match resolve_system_audio_device() {
+                SystemAudioStatus::Available { device, label } => {
+                    info!(
+                        "Meeting {id}: capturing system audio via '{label}'"
+                    );
+                    handles.push(spawn_recording_loop(
+                        self.app.clone(),
+                        self.store.clone(),
+                        id,
+                        stop_flag.clone(),
+                        "system".to_string(),
+                        Some(device),
+                    )?);
+                }
+                SystemAudioStatus::NotConfigured { install_hint } => {
+                    warn!(
+                        "Meeting {id}: system-audio requested but not configured — {install_hint}"
+                    );
+                    let _ = (MeetingStateEvent::Error {
+                        meeting_id: Some(id),
+                        message: format!(
+                            "System audio is enabled but not set up: {install_hint}"
+                        ),
+                    })
+                    .emit(&self.app);
+                }
+                SystemAudioStatus::NotYetSupported { message } => {
+                    warn!("Meeting {id}: system-audio not supported — {message}");
+                    let _ = (MeetingStateEvent::Error {
+                        meeting_id: Some(id),
+                        message,
+                    })
+                    .emit(&self.app);
+                }
+            }
+        }
 
         *slot = Some(ActiveMeeting {
             id,
             started: Instant::now(),
             stop_flag,
-            handle: Some(handle),
+            handles,
         });
 
         let _ = (MeetingStateEvent::Started {
@@ -259,7 +307,7 @@ impl MeetingManager {
     /// Stop the active meeting. Returns the finalized record.
     pub fn stop(&self) -> Result<MeetingRecord> {
         let mut slot = self.active.lock().unwrap();
-        let mut active = slot
+        let active = slot
             .take()
             .ok_or_else(|| anyhow!("No meeting in progress"))?;
 
@@ -267,7 +315,7 @@ impl MeetingManager {
         // Release the lock before join so a racing start() gets a fresh `None`.
         drop(slot);
 
-        if let Some(h) = active.handle.take() {
+        for h in active.handles {
             let _ = h.join();
         }
 
@@ -286,6 +334,20 @@ impl MeetingManager {
     }
 }
 
+/// Resolve the mic device from settings, or default to cpal's default input.
+fn resolve_mic_device(settings: &crate::settings::AppSettings) -> Option<cpal::Device> {
+    settings
+        .selected_microphone
+        .as_ref()
+        .and_then(|name| {
+            list_input_devices()
+                .ok()?
+                .into_iter()
+                .find(|d| d.name == *name)
+                .map(|d| d.device)
+        })
+}
+
 fn default_title(timestamp: i64) -> String {
     if let Some(dt) = DateTime::from_timestamp(timestamp, 0) {
         dt.with_timezone(&Local)
@@ -298,23 +360,29 @@ fn default_title(timestamp: i64) -> String {
 
 // ──────────────────────────── recording loop ────────────────────────────
 
-/// Spawns the background thread that drives the mic recorder and pipes
-/// chunks into transcription. Returns the thread handle so the caller can
-/// join on stop.
+/// Spawns a background thread that drives ONE capture source. Returns the
+/// thread handle so the caller can join on stop. A meeting can have one or
+/// two of these running in parallel (mic always, system audio optional).
 fn spawn_recording_loop(
     app: AppHandle,
     store: Arc<MeetingsStore>,
     meeting_id: i64,
     stop_flag: Arc<AtomicBool>,
+    source: String,
+    device: Option<cpal::Device>,
 ) -> Result<JoinHandle<()>> {
     let handle = thread::Builder::new()
-        .name(format!("meeting-{meeting_id}"))
+        .name(format!("meeting-{meeting_id}-{source}"))
         .spawn(move || {
-            if let Err(e) = run_recording_loop(&app, &store, meeting_id, &stop_flag) {
-                error!("Meeting {meeting_id} recording loop failed: {e}");
+            if let Err(e) =
+                run_recording_loop(&app, &store, meeting_id, &stop_flag, &source, device)
+            {
+                error!(
+                    "Meeting {meeting_id} [{source}] recording loop failed: {e}"
+                );
                 let _ = (MeetingStateEvent::Error {
                     meeting_id: Some(meeting_id),
-                    message: e.to_string(),
+                    message: format!("{source}: {e}"),
                 })
                 .emit(&app);
             }
@@ -327,29 +395,16 @@ fn run_recording_loop(
     store: &Arc<MeetingsStore>,
     meeting_id: i64,
     stop_flag: &Arc<AtomicBool>,
+    source: &str,
+    device: Option<cpal::Device>,
 ) -> Result<()> {
-    let settings = get_settings(app);
-
-    // Resolve the currently configured microphone (no VAD — we capture
-    // everything, let Whisper handle silence).
-    let selected_device = settings
-        .selected_microphone
-        .as_ref()
-        .and_then(|name| {
-            list_input_devices()
-                .ok()?
-                .into_iter()
-                .find(|d| d.name == *name)
-                .map(|d| d.device)
-        });
-
     let mut recorder = AudioRecorder::new()
         .map_err(|e| anyhow!("AudioRecorder::new failed: {e}"))?;
     recorder
-        .open(selected_device)
+        .open(device)
         .map_err(|e| anyhow!("Recorder open failed: {e}"))?;
 
-    info!("Meeting {meeting_id}: recorder opened, starting capture loop");
+    info!("Meeting {meeting_id} [{source}]: recorder opened, starting capture loop");
 
     let chunk_start = Instant::now();
     let mut offset_ms_at_chunk_start: u64 = 0;
@@ -384,7 +439,7 @@ fn run_recording_loop(
         // Short chunk (<400ms) is almost always start/stop overhead, skip it.
         if samples.len() < 16_000 / 3 {
             debug!(
-                "Meeting {meeting_id}: skipping tiny chunk ({} samples)",
+                "Meeting {meeting_id} [{source}]: skipping tiny chunk ({} samples)",
                 samples.len()
             );
             if !stop_flag.load(Ordering::SeqCst) {
@@ -393,9 +448,11 @@ fn run_recording_loop(
             continue;
         }
 
-        // Transcribe on THIS thread (one chunk at a time). We avoid parallel
-        // transcription because the model is a single GPU/CPU resource and
-        // queueing would only cause contention and OOM risk.
+        // Transcribe on THIS thread (one chunk at a time per source). The
+        // TranscriptionManager serialises internally — when two meeting
+        // threads call it concurrently they queue on its mutex. That's
+        // intentional: running the Whisper engine in two parallel lanes
+        // would double the GPU/CPU load and OOM on low-end hardware.
         let transcription_manager = match app.try_state::<Arc<TranscriptionManager>>() {
             Some(tm) => tm.inner().clone(),
             None => {
@@ -410,7 +467,7 @@ fn run_recording_loop(
                 if !cleaned.is_empty() {
                     let chunk = MeetingChunk {
                         offset_ms: this_chunk_offset_ms,
-                        source: "mic".to_string(),
+                        source: source.to_string(),
                         text: cleaned,
                     };
                     if let Err(e) = store.append_chunk(meeting_id, &chunk) {
@@ -424,7 +481,7 @@ fn run_recording_loop(
                 }
             }
             Err(e) => {
-                error!("Transcription failed for meeting {meeting_id}: {e}");
+                error!("Transcription failed for meeting {meeting_id} [{source}]: {e}");
             }
         }
 
@@ -434,6 +491,6 @@ fn run_recording_loop(
     }
 
     let _ = recorder.close();
-    info!("Meeting {meeting_id}: recording loop exited cleanly");
+    info!("Meeting {meeting_id} [{source}]: recording loop exited cleanly");
     Ok(())
 }

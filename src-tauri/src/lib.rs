@@ -435,6 +435,8 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::list_meetings,
             commands::meetings::get_meeting,
             commands::meetings::delete_meeting,
+            commands::meetings::get_system_audio_availability,
+            shortcut::change_capture_system_audio_setting,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
