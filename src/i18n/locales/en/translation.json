@@ -10,6 +10,7 @@
   },
   "sidebar": {
     "general": "General",
+    "meetings": "Meetings",
     "models": "Models",
     "advanced": "Advanced",
     "postProcessing": "Post Process",

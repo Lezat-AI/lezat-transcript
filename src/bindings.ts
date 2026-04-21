@@ -801,6 +801,49 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+async meetingStart(title: string | null) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_start", { title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingStop() : Promise<Result<MeetingRecord, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_stop") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingActive() : Promise<number | null> {
+    return await TAURI_INVOKE("meeting_active");
+},
+async listMeetings(limit: number | null) : Promise<Result<MeetingRecord[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_meetings", { limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getMeeting(id: number) : Promise<Result<MeetingRecord | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_meeting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteMeeting(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_meeting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Checks if the Mac is a laptop by detecting battery presence
  * 
@@ -821,9 +864,13 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
-historyUpdatePayload: HistoryUpdatePayload
+historyUpdatePayload: HistoryUpdatePayload,
+meetingStateEvent: MeetingStateEvent,
+meetingTranscriptChunkEvent: MeetingTranscriptChunkEvent
 }>({
-historyUpdatePayload: "history-update-payload"
+historyUpdatePayload: "history-update-payload",
+meetingStateEvent: "meeting-state-event",
+meetingTranscriptChunkEvent: "meeting-transcript-chunk-event"
 })
 
 /** user-defined constants **/
@@ -854,6 +901,18 @@ reset_bindings: string[] }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+export type MeetingChunk = { 
+/**
+ * ms offset from meeting start
+ */
+offset_ms: number; 
+/**
+ * "mic" or "system" (second reserved for dual-stream work)
+ */
+source: string; text: string }
+export type MeetingRecord = { id: number; started_at: number; ended_at: number | null; title: string; duration_ms: number; transcript_text: string; chunks: MeetingChunk[]; audio_path: string | null }
+export type MeetingStateEvent = { state: "started"; meeting_id: number; title: string } | { state: "stopped"; meeting_id: number } | { state: "error"; meeting_id: number | null; message: string }
+export type MeetingTranscriptChunkEvent = { meeting_id: number; chunk: MeetingChunk }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
