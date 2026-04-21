@@ -438,6 +438,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::get_system_audio_availability,
             shortcut::change_capture_system_audio_setting,
             shortcut::change_save_meeting_audio_setting,
+            shortcut::change_transcription_initial_prompt_setting,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![

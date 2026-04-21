@@ -1071,6 +1071,27 @@ pub fn change_save_meeting_audio_setting(app: AppHandle, enabled: bool) -> Resul
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_transcription_initial_prompt_setting(
+    app: AppHandle,
+    prompt: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    // Normalise empty / whitespace-only strings to None so the setting UI
+    // round-trips cleanly.
+    settings.transcription_initial_prompt = prompt.and_then(|s| {
+        let t = s.trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    });
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.append_trailing_space = enabled;

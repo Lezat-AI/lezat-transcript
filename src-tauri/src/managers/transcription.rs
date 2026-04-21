@@ -540,14 +540,26 @@ impl TranscriptionManager {
                                 Some(normalized)
                             };
 
+                            let custom_words_prompt = if settings.custom_words.is_empty() {
+                                None
+                            } else {
+                                Some(settings.custom_words.join(", "))
+                            };
+                            let user_prompt = settings
+                                .transcription_initial_prompt
+                                .as_ref()
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty());
+                            let initial_prompt = match (user_prompt, custom_words_prompt) {
+                                (Some(p), Some(w)) => Some(format!("{p}\nVocabulary: {w}")),
+                                (Some(p), None) => Some(p),
+                                (None, Some(w)) => Some(w),
+                                (None, None) => None,
+                            };
                             let params = WhisperInferenceParams {
                                 language: whisper_language,
                                 translate: settings.translate_to_english,
-                                initial_prompt: if settings.custom_words.is_empty() {
-                                    None
-                                } else {
-                                    Some(settings.custom_words.join(", "))
-                                },
+                                initial_prompt,
                                 ..Default::default()
                             };
 

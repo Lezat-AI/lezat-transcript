@@ -369,6 +369,15 @@ pub struct AppSettings {
     /// default because a 45-min meeting at 16 kHz mono is ~80 MB per source.
     #[serde(default)]
     pub save_meeting_audio: bool,
+    /// Free-form prompt passed to Whisper as its `initial_prompt`. Useful to
+    /// bias transcription toward a language and domain — e.g.
+    /// "Transcripción profesional en español de una reunión de equipo."
+    /// tells Whisper to expect Spanish business-meeting vocabulary before
+    /// any audio is seen, improving accuracy especially for names and
+    /// low-frequency terms. Combined with `custom_words` (which is also
+    /// used as a prompt) when both are set.
+    #[serde(default)]
+    pub transcription_initial_prompt: Option<String>,
     #[serde(default)]
     pub selected_output_device: Option<String>,
     #[serde(default = "default_translate_to_english")]
@@ -789,6 +798,7 @@ pub fn get_default_settings() -> AppSettings {
         always_on_microphone: false,
         capture_system_audio: false,
         save_meeting_audio: false,
+        transcription_initial_prompt: None,
         selected_microphone: None,
         clamshell_microphone: None,
         selected_output_device: None,
