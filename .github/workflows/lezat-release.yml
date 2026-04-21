@@ -1,14 +1,18 @@
 name: Lezat Release
 
-# Builds unsigned installers for macOS (arm64), Windows (x64), and Linux (x64).
-# Runs on manual dispatch or when a v* tag is pushed. Artifacts attach to the
-# matching GitHub Release (draft created if it doesn't exist), or download them
-# from the workflow run if no tag was pushed.
+# Builds installers + signed updater bundles for macOS (arm64), Windows (x64),
+# and Linux (x64). Runs on manual dispatch or when a v* tag is pushed. On tag
+# push the artifacts attach to a draft GitHub Release alongside a composed
+# latest.json that the in-app "Check for updates" button consumes.
 #
-# No secrets required — produces ad-hoc / unsigned binaries. When you're ready
-# for signed + notarized Mac builds and Azure-signed Windows MSIs, wire the
-# existing build.yml (from upstream Handy) into this workflow with
-# sign-binaries: true and supply the APPLE_* / Azure secrets.
+# Requires two repository secrets:
+#   TAURI_SIGNING_PRIVATE_KEY           - content of the private signing key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  - password used when the key was generated
+#
+# Installers (.dmg / .msi / .deb) remain unsigned at the OS level; Gatekeeper
+# / SmartScreen will still show a warning on first install. Code signing for
+# those installers is a separate concern (Apple Developer / Azure Trusted
+# Signing) wired via the existing build.yml.handy-upstream scaffold.
 
 on:
   workflow_dispatch:
@@ -30,23 +34,34 @@ jobs:
         include:
           - platform: macos-14
             target: aarch64-apple-darwin
-            args: --bundles dmg --target aarch64-apple-darwin
+            args: --bundles dmg,app --target aarch64-apple-darwin
             asset-glob: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            updater-glob: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz*
+            updater-key: darwin-aarch64
+
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             args: --bundles msi
             # Windows redirects CARGO_TARGET_DIR to C:\t (see "Shorten build
             # path" step) to avoid MAX_PATH issues in whisper.cpp's cmake build.
             asset-glob: C:/t/release/bundle/msi/*.msi
+            updater-glob: C:/t/release/bundle/msi/*.msi.zip*
+            updater-key: windows-x86_64
+
           - platform: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             args: --bundles deb
             asset-glob: src-tauri/target/release/bundle/deb/*.deb
+            # No AppImage → no updater artifact for Linux in this iteration.
+            updater-glob: ""
+            updater-key: linux-x86_64
 
     runs-on: ${{ matrix.platform }}
 
     env:
       LEZAT_AI_STUB: "1"
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -109,17 +124,119 @@ jobs:
       - name: Build
         run: bun run tauri build ${{ matrix.args }}
 
-      - name: Upload artifacts (workflow run)
+      # Installer artifact (.dmg / .msi / .deb)
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lezat-transcript-${{ matrix.target }}
+          name: installer-${{ matrix.target }}
           path: ${{ matrix.asset-glob }}
           if-no-files-found: error
 
-      - name: Attach to release (tag push only)
+      # Updater bundle + signature (skipped for Linux this iteration)
+      - name: Upload updater artifact
+        if: matrix.updater-glob != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ matrix.target }}
+          path: ${{ matrix.updater-glob }}
+          if-no-files-found: error
+
+      # Attach installer to the GitHub Release on tag pushes
+      - name: Attach installer to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset-glob }}
           draft: true
           generate_release_notes: true
+
+      # Attach updater bundles (.tar.gz, .msi.zip, .sig) to the release too —
+      # the in-app updater will download these via URLs in latest.json.
+      - name: Attach updater bundle to release
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.updater-glob != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.updater-glob }}
+          draft: true
+
+  # Compose latest.json from the uploaded updater artifacts and attach it to
+  # the release. Tauri's updater fetches this file and picks the platform key
+  # matching the user's OS/arch.
+  publish-updater-manifest:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (for repo metadata)
+        uses: actions/checkout@v4
+
+      - name: Download all updater artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: updater-artifacts
+          pattern: updater-*
+
+      - name: Compose latest.json
+        id: compose
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          export VERSION="${TAG#v}"
+          export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+          export RELEASE_TAG="${TAG}"
+
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+
+          version   = os.environ["VERSION"]
+          pub_date  = os.environ["PUB_DATE"]
+          base_url  = os.environ["BASE_URL"]
+          tag       = os.environ["RELEASE_TAG"]
+
+          # Map from updater-artifact directory names → Tauri platform keys.
+          target_to_platform = {
+              "updater-aarch64-apple-darwin": "darwin-aarch64",
+              "updater-x86_64-apple-darwin":  "darwin-x86_64",
+              "updater-x86_64-pc-windows-msvc": "windows-x86_64",
+              "updater-x86_64-unknown-linux-gnu": "linux-x86_64",
+          }
+
+          platforms = {}
+          root = pathlib.Path("updater-artifacts")
+          for artifact_dir in sorted(root.glob("updater-*")):
+              key = target_to_platform.get(artifact_dir.name)
+              if key is None:
+                  continue
+              sig_files    = list(artifact_dir.glob("*.sig"))
+              bundle_files = [p for p in artifact_dir.iterdir() if not p.name.endswith(".sig")]
+              if not sig_files or not bundle_files:
+                  print(f"WARN: skipping {artifact_dir.name} - missing sig or bundle", file=sys.stderr)
+                  continue
+              sig = sig_files[0].read_text().strip()
+              bundle_url = f"{base_url}/{bundle_files[0].name}"
+              platforms[key] = {"signature": sig, "url": bundle_url}
+              print(f"{key} -> {bundle_files[0].name}")
+
+          manifest = {
+              "version": version,
+              "notes": f"Lezat Transcript {tag}",
+              "pub_date": pub_date,
+              "platforms": platforms,
+          }
+
+          pathlib.Path("latest.json").write_text(json.dumps(manifest, indent=2))
+          print("--- latest.json ---")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Attach latest.json to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json
+          draft: true
