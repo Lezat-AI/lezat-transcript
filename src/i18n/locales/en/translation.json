@@ -11,6 +11,7 @@
   "sidebar": {
     "general": "General",
     "meetings": "Meetings",
+    "library": "Library",
     "models": "Models",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
