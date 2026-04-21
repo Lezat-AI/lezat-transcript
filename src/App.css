@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 @theme {
-  /* Design tokens — Lezat editorial palette
-     (derived from the brand HTML: near-black #0d0d1a + white, monochrome) */
+  /* Design tokens — Lezat palette
+     Primary monochrome navy + white (from brand HTML), with a sage green
+     secondary accent (hsl(140 35% 65%) supplied by the Lezat team) used
+     for subtle "available / success / active" highlights. */
   --color-text: #0f0f0f;
   --color-background: #fbfbfb;
   --color-background-ui: #0d0d1a;
@@ -10,6 +12,7 @@
   --color-logo-stroke: #1a1a2e;
   --color-text-stroke: #f6f6f6;
   --color-mid-gray: #808080;
+  --color-lezat-sage: hsl(140 35% 65%);
 }
 
 :root {

@@ -1,5 +1,6 @@
-// Lezat "L." monogram for the General sidebar tab.
-// Kept the file+export name as HandyHand so upstream imports don't need rewiring.
+// Lezat ring mark for the General sidebar tab.
+// Matches the wordmark/favicon extracted from the Lezat brand assets.
+// Kept the file + export name as HandyHand so upstream imports don't break.
 const HandyHand = ({
   width,
   height,
@@ -11,20 +12,10 @@ const HandyHand = ({
     width={width || 24}
     height={height || 24}
     viewBox="0 0 24 24"
-    className="fill-current"
+    className="stroke-current fill-none"
     xmlns="http://www.w3.org/2000/svg"
   >
-    <text
-      x="2"
-      y="18"
-      fontFamily="'Inter', system-ui, -apple-system, sans-serif"
-      fontSize="20"
-      fontWeight="900"
-      letterSpacing="-1"
-    >
-      L
-    </text>
-    <circle cx="18" cy="18" r="2" />
+    <circle cx="12" cy="12" r="8.5" strokeWidth="2.5" />
   </svg>
 );
 
