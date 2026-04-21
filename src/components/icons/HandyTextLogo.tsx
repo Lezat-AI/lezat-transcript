@@ -1,8 +1,10 @@
 import React from "react";
+import lezatLogo from "../../assets/lezat-logo.png";
 
-// Placeholder wordmark for Lezat Transcript.
-// Keeps the original component name + props so imports don't break.
-// Swap in real artwork when ready.
+// Lezat wordmark — real logo extracted from the brand HTML invitation.
+// Component name preserved so upstream Handy imports don't need rewiring.
+// The source PNG is white-on-transparent and looks best against a dark
+// background; upstream callers pass className with `text-white` / dark bg.
 const HandyTextLogo = ({
   width,
   height,
@@ -12,28 +14,15 @@ const HandyTextLogo = ({
   height?: number;
   className?: string;
 }) => {
-  const aspectViewBox = "0 0 600 120";
   return (
-    <svg
+    <img
+      src={lezatLogo}
+      alt="Lezat"
       width={width}
       height={height}
       className={className}
-      viewBox={aspectViewBox}
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <text
-        x="0"
-        y="85"
-        fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
-        fontSize="96"
-        fontWeight="700"
-        letterSpacing="-2"
-        className="logo-primary"
-        fill="currentColor"
-      >
-        lezat<tspan fill="#F9C5E8">.</tspan>
-      </text>
-    </svg>
+      style={{ objectFit: "contain" }}
+    />
   );
 };
 
