@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use wasapi::{
-    get_default_device, initialize_mta, Direction, SampleType, ShareMode, WaveFormat,
+    get_default_device, initialize_mta, Direction, SampleType, StreamMode, WaveFormat,
 };
 
 const WHISPER_SR: u32 = 16_000;
@@ -210,13 +210,14 @@ struct StreamSetup {
     channels: u16,
     sample_type: SampleType,
     bits_per_sample: u16,
-    block_align: u16,
+    block_align: u32,
 }
 
 fn init_stream() -> Result<StreamSetup> {
+    // initialize_mta returns an HRESULT; its `.ok()` maps to a Result<(), _>.
     initialize_mta()
         .ok()
-        .ok_or_else(|| anyhow!("initialize_mta failed"))?;
+        .map_err(|e| anyhow!("initialize_mta failed: {e:?}"))?;
 
     let device = get_default_device(&Direction::Render)
         .map_err(|e| anyhow!("get_default_device(Render) failed: {e:?}"))?;
@@ -233,14 +234,18 @@ fn init_stream() -> Result<StreamSetup> {
         .get_periods()
         .map_err(|e| anyhow!("get_periods failed: {e:?}"))?;
 
-    // Capture direction + loopback=true gives us a read of the render mix.
+    // wasapi 0.18 replaced the (share_mode + period + loopback) params with a
+    // single StreamMode. EventsShared gives us a signalled handle we can wait
+    // on; we then open the client with Direction::Capture + Render-device to
+    // get a loopback stream of the system mix.
     audio_client
         .initialize_client(
             &mix_format,
-            def_period,
             &Direction::Capture,
-            &ShareMode::Shared,
-            true,
+            &StreamMode::EventsShared {
+                autoconvert: true,
+                buffer_duration_hns: def_period,
+            },
         )
         .map_err(|e| anyhow!("initialize_client (loopback) failed: {e:?}"))?;
 
@@ -292,7 +297,7 @@ fn decode_mono(
     if channels == 0 {
         return Vec::new();
     }
-    let bytes_per_sample = (bits_per_sample / 8) as usize;
+    let bytes_per_sample: usize = (bits_per_sample / 8).into();
     let frame_bytes = bytes_per_sample * channels;
     if frame_bytes == 0 || raw.len() < frame_bytes {
         return Vec::new();

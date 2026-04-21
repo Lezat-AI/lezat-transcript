@@ -220,6 +220,39 @@ impl MeetingsStore {
         Ok(())
     }
 
+    /// Prune meetings older than `cutoff_ts` (Unix seconds). Removes both
+    /// the DB row and any persisted audio directory on disk. Respects the
+    /// same retention policy the dictation history uses; called
+    /// opportunistically on meeting finalize.
+    pub fn prune_older_than(&self, cutoff_ts: i64) -> Result<usize> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, audio_path FROM meetings WHERE started_at < ?1",
+        )?;
+        let rows: Vec<(i64, Option<String>)> = stmt
+            .query_map(params![cutoff_ts], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+
+        let mut pruned = 0usize;
+        for (id, audio_path) in rows {
+            conn.execute("DELETE FROM meetings WHERE id = ?1", params![id])?;
+            if let Some(p) = audio_path {
+                let path = std::path::Path::new(&p);
+                if path.is_dir() {
+                    let _ = std::fs::remove_dir_all(path);
+                } else if path.is_file() {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+            pruned += 1;
+        }
+        Ok(pruned)
+    }
+
     pub fn set_audio_path(&self, meeting_id: i64, path: &str) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
@@ -457,6 +490,17 @@ impl MeetingManager {
         let ended_at = Utc::now().timestamp();
         self.store.finalize(active.id, ended_at, duration_ms)?;
 
+        // Opportunistic retention cleanup — mirror whatever the user set for
+        // dictation history.
+        let settings = get_settings(&self.app);
+        if let Some(cutoff) = retention_cutoff_ts(&settings.recording_retention_period, ended_at) {
+            match self.store.prune_older_than(cutoff) {
+                Ok(n) if n > 0 => info!("Pruned {n} old meeting(s) past the retention cutoff"),
+                Ok(_) => {}
+                Err(e) => warn!("Meeting retention prune failed: {e}"),
+            }
+        }
+
         let _ = (MeetingStateEvent::Stopped {
             meeting_id: active.id,
         })
@@ -480,6 +524,19 @@ fn resolve_mic_device(settings: &crate::settings::AppSettings) -> Option<cpal::D
                 .find(|d| d.name == *name)
                 .map(|d| d.device)
         })
+}
+
+fn retention_cutoff_ts(
+    policy: &crate::settings::RecordingRetentionPeriod,
+    now: i64,
+) -> Option<i64> {
+    use crate::settings::RecordingRetentionPeriod as R;
+    match policy {
+        R::Never | R::PreserveLimit => None, // PreserveLimit is count-based, skip for meetings
+        R::Days3 => Some(now - 3 * 24 * 60 * 60),
+        R::Weeks2 => Some(now - 2 * 7 * 24 * 60 * 60),
+        R::Months3 => Some(now - 3 * 30 * 24 * 60 * 60),
+    }
 }
 
 fn default_title(timestamp: i64) -> String {
