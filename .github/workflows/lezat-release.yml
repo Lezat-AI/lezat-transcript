@@ -35,7 +35,9 @@ jobs:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             args: --bundles msi
-            asset-glob: src-tauri/target/release/bundle/msi/*.msi
+            # Windows redirects CARGO_TARGET_DIR to C:\t (see "Shorten build
+            # path" step) to avoid MAX_PATH issues in whisper.cpp's cmake build.
+            asset-glob: C:/t/release/bundle/msi/*.msi
           - platform: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             args: --bundles deb
