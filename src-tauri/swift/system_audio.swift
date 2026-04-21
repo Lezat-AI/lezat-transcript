@@ -10,7 +10,26 @@
 import AVFoundation
 import CoreMedia
 import Foundation
-@preconcurrency import ScreenCaptureKit
+import ScreenCaptureKit
+
+// Small thread-safe box so our @_cdecl shims can wait on a Task's result
+// without tripping the "mutation of captured var in concurrently-executing
+// code" rule. The Swift language lets us opt out of Sendable checking as
+// long as the mutation is externally synchronised — NSLock handles that.
+private final class ResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int32 = 0
+    func set(_ v: Int32) {
+        lock.lock()
+        value = v
+        lock.unlock()
+    }
+    func get() -> Int32 {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
 
 @available(macOS 13.0, *)
 private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
@@ -204,20 +223,20 @@ public func lezat_sysaudio_start() -> Int32 {
     // dedicated dispatch semaphore. The caller (Rust) is already on its
     // own thread, so blocking here doesn't stall the UI.
     let semaphore = DispatchSemaphore(value: 0)
-    var result: Int32 = 0
+    let box = ResultBox()
 
-    Task.detached {
+    Task.detached { [box] in
         do {
             try await SystemAudioCapture.shared.start()
         } catch {
             NSLog("LezatSystemAudio start failed: \(error.localizedDescription)")
-            result = -2
+            box.set(-2)
         }
         semaphore.signal()
     }
 
     semaphore.wait()
-    return result
+    return box.get()
 }
 
 @_cdecl("lezat_sysaudio_stop")
