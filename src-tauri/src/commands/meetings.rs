@@ -89,3 +89,13 @@ pub fn delete_meeting(
 ) -> Result<(), String> {
     mgr.store().delete(id).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn rename_meeting(
+    mgr: State<Arc<MeetingManager>>,
+    id: i64,
+    title: String,
+) -> Result<(), String> {
+    mgr.store().rename(id, &title).map_err(|e| e.to_string())
+}

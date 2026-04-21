@@ -262,6 +262,19 @@ impl MeetingsStore {
         Ok(())
     }
 
+    pub fn rename(&self, meeting_id: i64, title: &str) -> Result<()> {
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow!("Meeting title cannot be empty"));
+        }
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE meetings SET title = ?1 WHERE id = ?2",
+            params![trimmed, meeting_id],
+        )?;
+        Ok(())
+    }
+
     pub fn list(&self, limit: usize) -> Result<Vec<MeetingRecord>> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(

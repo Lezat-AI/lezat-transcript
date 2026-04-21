@@ -844,6 +844,14 @@ async deleteMeeting(id: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async renameMeeting(id: number, title: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_meeting", { id, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getSystemAudioAvailability() : Promise<SystemAudioAvailability> {
     return await TAURI_INVOKE("get_system_audio_availability");
 },

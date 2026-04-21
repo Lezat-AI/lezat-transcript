@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink, Save } from "lucide-react";
+import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink, Save, Pencil } from "lucide-react";
 import { commands } from "@/bindings";
 import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
@@ -47,6 +47,64 @@ function formatStartedAt(ts: number): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function InlineTitle({
+  initial,
+  subtitle,
+  onRename,
+}: {
+  initial: string;
+  subtitle?: string;
+  onRename: (next: string) => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(initial);
+  useEffect(() => setValue(initial), [initial]);
+
+  if (editing) {
+    return (
+      <div className="flex-1 min-w-0">
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={async () => {
+            const next = value.trim();
+            if (next && next !== initial) {
+              await onRename(next);
+            } else {
+              setValue(initial);
+            }
+            setEditing(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setValue(initial);
+              setEditing(false);
+            }
+          }}
+          className="text-base font-bold bg-transparent border-b border-logo-primary focus:outline-none w-full"
+        />
+        {subtitle && <p className="text-xs text-mid-gray mt-1">{subtitle}</p>}
+      </div>
+    );
+  }
+  return (
+    <div className="flex-1 min-w-0">
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="group text-left flex items-center gap-1.5"
+        title="Click to rename"
+      >
+        <h3 className="text-base font-bold truncate">{initial}</h3>
+        <Pencil className="w-3.5 h-3.5 text-mid-gray opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+      </button>
+      {subtitle && <p className="text-xs text-mid-gray">{subtitle}</p>}
+    </div>
+  );
 }
 
 export function MeetingsPage() {
@@ -391,13 +449,15 @@ export function MeetingsPage() {
       {viewing && (
         <section className="rounded-xl border border-mid-gray/20 p-5 flex flex-col gap-3">
           <div className="flex items-start justify-between">
-            <div>
-              <h3 className="text-base font-bold">{viewing.title}</h3>
-              <p className="text-xs text-mid-gray">
-                {formatStartedAt(viewing.started_at)} ·{" "}
-                {formatDuration(viewing.duration_ms)}
-              </p>
-            </div>
+            <InlineTitle
+              initial={viewing.title}
+              onRename={async (next) => {
+                await commands.renameMeeting(viewing.id, next);
+                setViewing({ ...viewing, title: next });
+                refreshList();
+              }}
+              subtitle={`${formatStartedAt(viewing.started_at)} · ${formatDuration(viewing.duration_ms)}`}
+            />
             <button
               onClick={() => setViewing(null)}
               className="text-xs text-mid-gray hover:underline"
