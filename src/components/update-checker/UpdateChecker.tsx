@@ -4,6 +4,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { Loader2 } from "lucide-react";
 import { ProgressBar } from "../shared";
 import { useSettings } from "../../hooks/useSettings";
 import { commands } from "../../bindings";
@@ -100,19 +101,24 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   };
 
   const installUpdate = async () => {
-    if (!updateChecksEnabled) return;
+    if (!updateChecksEnabled || isInstalling) return;
 
-    const portable = await commands.isPortable();
-    if (portable) {
-      setShowPortableUpdateDialog(true);
-      return;
-    }
+    // Flip the busy flag *synchronously* before any `await` so rapid
+    // clicks during the portable/check roundtrip can't re-enter this
+    // handler. Reset on the portable branch.
+    setIsInstalling(true);
+    setDownloadProgress(0);
+    downloadedBytesRef.current = 0;
+    contentLengthRef.current = 0;
 
     try {
-      setIsInstalling(true);
-      setDownloadProgress(0);
-      downloadedBytesRef.current = 0;
-      contentLengthRef.current = 0;
+      const portable = await commands.isPortable();
+      if (portable) {
+        setShowPortableUpdateDialog(true);
+        setIsInstalling(false);
+        return;
+      }
+
       const update = await check();
 
       if (!update) {
@@ -137,6 +143,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
                 : 0;
             setDownloadProgress(Math.min(progress, 100));
             break;
+          case "Finished":
+            setDownloadProgress(100);
+            break;
         }
       });
       await relaunch();
@@ -156,19 +165,23 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       return t("footer.updateCheckingDisabled");
     }
     if (isInstalling) {
-      return downloadProgress > 0 && downloadProgress < 100
-        ? t("footer.downloading", {
-            progress: downloadProgress.toString().padStart(3),
-          })
-        : downloadProgress === 100
-          ? t("footer.installing")
-          : t("footer.preparing");
+      if (downloadProgress === 100) return t("footer.installing");
+      if (downloadProgress > 0)
+        return t("footer.downloading", {
+          progress: downloadProgress.toString().padStart(3),
+        });
+      return t("footer.preparing");
     }
     if (isChecking) return t("footer.checkingUpdates");
     if (showUpToDate) return t("footer.upToDate");
     if (updateAvailable) return t("footer.updateAvailableShort");
     return t("footer.checkForUpdates");
   };
+
+  // A progress bar is visible the whole time we're installing — at 0% during
+  // "preparing" (head request, signature fetch) so the user gets an immediate
+  // "something is happening" cue instead of a silent button-label change.
+  const shouldShowProgress = isInstalling;
 
   const getUpdateStatusAction = () => {
     if (!updateChecksEnabled) return undefined;
@@ -218,21 +231,27 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
           <button
             onClick={getUpdateStatusAction()}
             disabled={isUpdateDisabled}
-            className={`transition-colors disabled:opacity-50 tabular-nums ${
+            className={`transition-colors disabled:opacity-50 tabular-nums flex items-center gap-1.5 ${
               updateAvailable
                 ? "text-logo-primary hover:text-logo-primary/80 font-medium"
                 : "text-text/60 hover:text-text/80"
             }`}
           >
+            {(isInstalling || isChecking) && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            )}
             {getUpdateStatusText()}
           </button>
         ) : (
-          <span className="text-text/60 tabular-nums">
+          <span className="text-text/60 tabular-nums flex items-center gap-1.5">
+            {(isInstalling || isChecking) && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            )}
             {getUpdateStatusText()}
           </span>
         )}
 
-        {isInstalling && downloadProgress > 0 && downloadProgress < 100 && (
+        {shouldShowProgress && (
           <ProgressBar
             progress={[
               {
