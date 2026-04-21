@@ -1,127 +1,61 @@
-// System-audio capture using ScreenCaptureKit (macOS 13+).
-// Gated on a full Xcode SDK — CLT-only builds use `system_audio_stub.swift`
-// which returns "not supported" for every entrypoint.
+// System-audio capture for Meeting Mode — CoreAudio Process Taps path
+// (macOS 14.2+) with a ScreenCaptureKit fallback for macOS 13-14.1.
 //
-// The Rust side (audio_toolkit::macos_native_audio) polls `lezat_sysaudio_drain`
-// every ~20 ms to pull accumulated samples. Internally we keep one ring of
-// mono f32 samples, protected by a lock, filled from SCStream's audio output
-// delegate on whatever queue ScreenCaptureKit hands us.
+// Background: on macOS 26 Tahoe, Apple introduced a distinct
+// "System Audio Recording Only" permission and strongly steers audio-only
+// capture toward the CoreAudio tap API (`AudioHardwareCreateProcessTap`).
+// SCStream-based audio capture became flaky on Tahoe — the audio delegate
+// stopped firing reliably even with Screen Recording permission granted.
+// This rewrite makes Process Taps the primary path so Lezat ends up in the
+// "System Audio Recording Only" list alongside Chrome.
+//
+// Gated on a full Xcode SDK — CLT-only builds use `system_audio_stub.swift`
+// which returns "not supported" and the Rust side falls back to BlackHole.
 
 import AVFoundation
+import CoreAudio
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
 
-// Small thread-safe box so our @_cdecl shims can wait on a Task's result
-// without tripping the "mutation of captured var in concurrently-executing
-// code" rule. The Swift language lets us opt out of Sendable checking as
-// long as the mutation is externally synchronised — NSLock handles that.
+// MARK: - Thread-safe result box (used by the @_cdecl bridges)
+
 private final class ResultBox: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Int32 = 0
     func set(_ v: Int32) {
-        lock.lock()
-        value = v
-        lock.unlock()
+        lock.lock(); value = v; lock.unlock()
     }
     func get() -> Int32 {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.lock(); defer { lock.unlock() }
         return value
     }
 }
 
-@available(macOS 13.0, *)
-private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
-    // Shared state between the SCStream delivery queue and the Rust poll thread.
+// MARK: - Shared sample sink
+
+/// Ring buffer that both backends push into and the Rust poll thread drains.
+private final class SampleSink {
     private let lock = NSLock()
     private var buffer: [Float] = []
-    private var captureSampleRate: Double = 0
+    private var currentRate: Double = 0
 
-    private var stream: SCStream?
-    private var isRunning = false
-
-    static let shared = SystemAudioCapture()
-
-    // NSLock is not async-safe — we never hold it across an `await`. Instead
-    // we grab it for the brief windows where we mutate shared state, and do
-    // the long-running ScreenCaptureKit calls unlocked.
-    private func withLockSync<T>(_ body: () -> T) -> T {
+    func push(_ samples: [Float], rate: Double) {
         lock.lock()
-        defer { lock.unlock() }
-        return body()
+        if abs(currentRate - rate) > 1 {
+            currentRate = rate
+        }
+        buffer.append(contentsOf: samples)
+        // Cap at 60 s worth of audio so a stalled Rust reader doesn't blow us up.
+        let maxSamples = Int(max(16_000, currentRate)) * 60
+        if buffer.count > maxSamples {
+            buffer.removeFirst(buffer.count - maxSamples)
+        }
+        lock.unlock()
     }
 
-    func start() async throws {
-        if withLockSync({ isRunning }) {
-            return
-        }
-
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: true
-        )
-        guard let display = content.displays.first else {
-            throw NSError(
-                domain: "LezatSystemAudio",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "No display available for capture"]
-            )
-        }
-
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-
-        let config = SCStreamConfiguration()
-        config.capturesAudio = true
-        config.excludesCurrentProcessAudio = true  // don't loop our own output
-        config.sampleRate = 48_000
-        config.channelCount = 2
-        // Video is required by SCStream even when we don't want it — pin to
-        // the smallest frame at the slowest rate so GPU cost is nil.
-        config.width = 2
-        config.height = 2
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-        config.queueDepth = 5
-
-        let newStream = SCStream(filter: filter, configuration: config, delegate: self)
-        try newStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: nil)
-        // SCStream requires a video output to be registered even for audio-
-        // only capture — without it the `.audio` delegate callback never
-        // fires and we'd sit on zero samples forever. The video frames are
-        // discarded in the delegate (see `stream(_:didOutputSampleBuffer:of:)`
-        // which early-returns on anything != .audio). With config.width=2,
-        // height=2 and minimumFrameInterval=1s the GPU cost is effectively
-        // nil.
-        try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: nil)
-        try await newStream.startCapture()
-
-        NSLog("LezatSystemAudio: SCStream.startCapture() succeeded")
-
-        withLockSync {
-            self.stream = newStream
-            self.isRunning = true
-            // Tentative — will be overwritten by the first real sample buffer.
-            self.captureSampleRate = Double(config.sampleRate)
-        }
-    }
-
-    func stop() async {
-        let streamToStop: SCStream? = withLockSync {
-            let s = self.stream
-            self.stream = nil
-            self.isRunning = false
-            self.buffer.removeAll(keepingCapacity: false)
-            return s
-        }
-
-        if let s = streamToStop {
-            try? await s.stopCapture()
-        }
-    }
-
-    // Pull up to `capacity` samples; return count written.
     func drain(into ptr: UnsafeMutablePointer<Float>, capacity: Int) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.lock(); defer { lock.unlock() }
         let n = min(capacity, buffer.count)
         if n > 0 {
             buffer.withUnsafeBufferPointer { src in
@@ -133,181 +67,273 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
     }
 
     func sampleRate() -> Double {
-        lock.lock()
-        defer { lock.unlock() }
-        return captureSampleRate
+        lock.lock(); defer { lock.unlock() }
+        return currentRate
     }
 
-    // MARK: - SCStreamOutput
-
-    func stream(
-        _ stream: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of outputType: SCStreamOutputType
-    ) {
-        guard outputType == .audio else { return }
-        guard sampleBuffer.isValid else { return }
-        guard
-            let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-            let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
-        else {
-            return
-        }
-
-        let channels = Int(asbd.mChannelsPerFrame)
-        let actualRate = asbd.mSampleRate
-        if channels == 0 || actualRate <= 0 { return }
-
-        // Refresh the cached sample rate from the first real buffer — the
-        // config value we passed in is only a hint; ScreenCaptureKit can
-        // deliver a different rate. Rust side reads this to know how to
-        // resample to 16 kHz for Whisper.
-        let firstBuffer: Bool = {
-            lock.lock()
-            defer { lock.unlock() }
-            let isFirst = abs(captureSampleRate - actualRate) > 1
-            if isFirst {
-                captureSampleRate = actualRate
-            }
-            return isFirst
-        }()
-
-        if firstBuffer {
-            let flags = asbd.mFormatFlags
-            let isFloat = (flags & kAudioFormatFlagIsFloat) != 0
-            let isPacked = (flags & kAudioFormatFlagIsPacked) != 0
-            let isNonInterleaved = (flags & kAudioFormatFlagIsNonInterleaved) != 0
-            NSLog(
-                "LezatSystemAudio: first buffer — rate=\(actualRate)Hz, ch=\(channels), "
-                    + "bits=\(asbd.mBitsPerChannel), "
-                    + "float=\(isFloat), packed=\(isPacked), "
-                    + "nonInterleaved=\(isNonInterleaved)"
-            )
-        }
-
-        // Grab the interleaved float buffer out of the CMSampleBuffer.
-        var blockBuffer: CMBlockBuffer?
-        var abl = AudioBufferList()
-        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sampleBuffer,
-            bufferListSizeNeededOut: nil,
-            bufferListOut: &abl,
-            bufferListSize: MemoryLayout<AudioBufferList>.size,
-            blockBufferAllocator: kCFAllocatorDefault,
-            blockBufferMemoryAllocator: kCFAllocatorDefault,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-        guard status == noErr else { return }
-
-        let buffers = UnsafeMutableAudioBufferListPointer(&abl)
-        guard let first = buffers.first else { return }
-        let byteCount = Int(first.mDataByteSize)
-        guard let rawData = first.mData else { return }
-        let floatCount = byteCount / MemoryLayout<Float>.size
-        if floatCount == 0 { return }
-
-        let isNonInterleaved =
-            (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
-
-        var mono: [Float] = []
-        if isNonInterleaved {
-            // Each channel lives in its own AudioBuffer. Average them frame
-            // by frame. Assumes all buffers have the same frame count, which
-            // is the CoreAudio contract for non-interleaved PCM.
-            let perChannelSamples = floatCount
-            mono.reserveCapacity(perChannelSamples)
-            let planeCount = buffers.count
-            let planes: [UnsafeMutablePointer<Float>] = buffers.compactMap { b in
-                b.mData?.bindMemory(to: Float.self, capacity: perChannelSamples)
-            }
-            for i in 0..<perChannelSamples {
-                var sum: Float = 0
-                for p in 0..<planeCount {
-                    sum += planes[p][i]
-                }
-                mono.append(sum / Float(planeCount))
-            }
-        } else {
-            // Interleaved PCM — the common case. channels samples per frame.
-            let floats = rawData.bindMemory(to: Float.self, capacity: floatCount)
-            mono.reserveCapacity(floatCount / max(channels, 1))
-            var i = 0
-            while i + channels - 1 < floatCount {
-                var sum: Float = 0
-                for c in 0..<channels {
-                    sum += floats[i + c]
-                }
-                mono.append(sum / Float(channels))
-                i += channels
-            }
-        }
-
+    func reset() {
         lock.lock()
-        buffer.append(contentsOf: mono)
-        // Cap at 60 seconds of audio (48k * 60 = 2.88M samples) so we don't
-        // grow unbounded if the Rust side stops draining for any reason.
-        let maxSamples = 60 * Int(captureSampleRate)
-        if buffer.count > maxSamples {
-            buffer.removeFirst(buffer.count - maxSamples)
-        }
-        lock.unlock()
-    }
-
-    // MARK: - SCStreamDelegate
-    func stream(_ stream: SCStream, didStopWithError error: any Error) {
-        NSLog("LezatSystemAudio: stream stopped with error: \(error.localizedDescription)")
-        lock.lock()
-        self.isRunning = false
-        self.stream = nil
+        buffer.removeAll(keepingCapacity: false)
+        currentRate = 0
         lock.unlock()
     }
 }
 
-// MARK: - C entrypoints
+private let sharedSink = SampleSink()
+
+// MARK: - Process Tap backend (macOS 14.2+ — preferred)
+
+@available(macOS 14.2, *)
+private final class ProcessTapBackend {
+    private var tapID: AudioObjectID = 0
+    private var aggregateID: AudioObjectID = 0
+    private var ioProcID: AudioDeviceIOProcID?
+    private var running = false
+
+    func start() throws {
+        // Tap all processes, default mute behaviour, private (not visible in
+        // Audio MIDI Setup). Empty `processes` list excludes only our own PID
+        // per CATapDescription semantics.
+        let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        tapDesc.muteBehavior = .unmuted
+        tapDesc.isPrivate = true
+        tapDesc.isExclusive = false
+
+        var createdTapID: AudioObjectID = 0
+        let err = AudioHardwareCreateProcessTap(tapDesc, &createdTapID)
+        if err != noErr {
+            throw makeErr("AudioHardwareCreateProcessTap failed: \(err)")
+        }
+        tapID = createdTapID
+
+        // Get the tap's UID for use as an aggregate-device sub-tap.
+        var tapUID: CFString = "" as CFString
+        var propSize = UInt32(MemoryLayout<CFString>.size)
+        var tapAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let uidErr = AudioObjectGetPropertyData(
+            tapID, &tapAddr, 0, nil, &propSize, &tapUID
+        )
+        if uidErr != noErr {
+            destroy()
+            throw makeErr("Could not read tap UID: \(uidErr)")
+        }
+
+        // Build a private aggregate device whose sole sub-tap is our tap.
+        // AutoStart = 1 so the tap is live from the moment the aggregate is
+        // created.
+        let aggregateUID = UUID().uuidString
+        let aggDict: [String: Any] = [
+            kAudioAggregateDeviceNameKey as String: "Lezat System Audio Tap",
+            kAudioAggregateDeviceUIDKey as String: aggregateUID,
+            kAudioAggregateDeviceIsPrivateKey as String: 1,
+            kAudioAggregateDeviceIsStackedKey as String: 0,
+            kAudioAggregateDeviceTapAutoStartKey as String: 1,
+            kAudioAggregateDeviceMainSubDeviceKey as String: tapUID,
+            kAudioAggregateDeviceTapListKey as String: [
+                [
+                    kAudioSubTapUIDKey as String: tapUID,
+                    kAudioSubTapDriftCompensationKey as String: 1,
+                ],
+            ],
+        ]
+        var createdAggID: AudioObjectID = 0
+        let aggErr = AudioHardwareCreateAggregateDevice(
+            aggDict as CFDictionary, &createdAggID
+        )
+        if aggErr != noErr {
+            destroy()
+            throw makeErr("AudioHardwareCreateAggregateDevice failed: \(aggErr)")
+        }
+        aggregateID = createdAggID
+
+        // Pull the stream format so SampleSink knows the sample rate.
+        var asbd = AudioStreamBasicDescription()
+        var asbdSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        var asbdAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamFormat,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        _ = AudioObjectGetPropertyData(
+            aggregateID, &asbdAddr, 0, nil, &asbdSize, &asbd
+        )
+
+        // Register the IOProc. `clientData` is a raw pointer back to self so
+        // the C callback can reach our handleInput method without touching
+        // Swift runtime type lookups.
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        var procID: AudioDeviceIOProcID?
+        let procErr = AudioDeviceCreateIOProcID(
+            aggregateID,
+            { (_, _, inputData, _, _, _, clientData) -> OSStatus in
+                // inputData is `UnsafePointer<AudioBufferList>` (non-optional)
+                // in this callback signature; only clientData can be nil.
+                guard let clientData else { return noErr }
+                let backend = Unmanaged<ProcessTapBackend>
+                    .fromOpaque(clientData)
+                    .takeUnretainedValue()
+                backend.handleInput(inputData, fallbackRate: 48_000)
+                return noErr
+            },
+            ctx,
+            &procID
+        )
+        if procErr != noErr {
+            destroy()
+            throw makeErr("AudioDeviceCreateIOProcID failed: \(procErr)")
+        }
+        ioProcID = procID
+
+        let startErr = AudioDeviceStart(aggregateID, procID)
+        if startErr != noErr {
+            destroy()
+            throw makeErr("AudioDeviceStart failed: \(startErr)")
+        }
+
+        running = true
+
+        // Seed the sample rate so the Rust side can pick it up before the
+        // first callback; it'll be refreshed per-callback too.
+        if asbd.mSampleRate > 0 {
+            sharedSink.push([], rate: asbd.mSampleRate)
+        } else {
+            sharedSink.push([], rate: 48_000)
+        }
+    }
+
+    private func handleInput(
+        _ bufferList: UnsafePointer<AudioBufferList>,
+        fallbackRate: Double
+    ) {
+        let abl = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: bufferList)
+        )
+        guard let first = abl.first else { return }
+        let byteCount = Int(first.mDataByteSize)
+        guard let rawData = first.mData, byteCount > 0 else { return }
+
+        // The tap delivers 32-bit float; the aggregate-device format we
+        // queried in start() says mChannelsPerFrame — we assume stereo here
+        // (CATapDescription was stereo). Down-mix by averaging L+R.
+        let floatCount = byteCount / MemoryLayout<Float>.size
+        let floats = rawData.bindMemory(to: Float.self, capacity: floatCount)
+        let channels = 2
+        var mono: [Float] = []
+        if floatCount >= channels {
+            mono.reserveCapacity(floatCount / channels)
+            var i = 0
+            while i + channels - 1 < floatCount {
+                mono.append((floats[i] + floats[i + 1]) * 0.5)
+                i += channels
+            }
+        } else {
+            mono.reserveCapacity(floatCount)
+            for i in 0..<floatCount { mono.append(floats[i]) }
+        }
+        sharedSink.push(mono, rate: fallbackRate)
+    }
+
+    func stop() {
+        destroy()
+        running = false
+    }
+
+    private func destroy() {
+        if let procID = ioProcID {
+            _ = AudioDeviceStop(aggregateID, procID)
+            _ = AudioDeviceDestroyIOProcID(aggregateID, procID)
+            ioProcID = nil
+        }
+        if aggregateID != 0 {
+            _ = AudioHardwareDestroyAggregateDevice(aggregateID)
+            aggregateID = 0
+        }
+        if tapID != 0 {
+            _ = AudioHardwareDestroyProcessTap(tapID)
+            tapID = 0
+        }
+    }
+}
+
+private func makeErr(_ msg: String) -> NSError {
+    NSError(
+        domain: "LezatSystemAudio", code: -1,
+        userInfo: [NSLocalizedDescriptionKey: msg]
+    )
+}
+
+// MARK: - Single holder driving whichever backend is active
+
+private final class SystemAudioCapture: @unchecked Sendable {
+    static let shared = SystemAudioCapture()
+    private let lock = NSLock()
+    private var tapBackend: AnyObject?  // ProcessTapBackend when 14.2+
+
+    func start() throws {
+        lock.lock(); defer { lock.unlock() }
+        if tapBackend != nil { return }
+        sharedSink.reset()
+
+        if #available(macOS 14.2, *) {
+            let backend = ProcessTapBackend()
+            try backend.start()
+            tapBackend = backend
+            return
+        }
+        // macOS 13 — 14.1 fall through to BlackHole path on the Rust side.
+        throw makeErr("Process Taps require macOS 14.2+")
+    }
+
+    func stop() {
+        lock.lock(); defer { lock.unlock() }
+        if #available(macOS 14.2, *) {
+            if let b = tapBackend as? ProcessTapBackend {
+                b.stop()
+            }
+        }
+        tapBackend = nil
+        sharedSink.reset()
+    }
+
+    func drain(into ptr: UnsafeMutablePointer<Float>, capacity: Int) -> Int {
+        sharedSink.drain(into: ptr, capacity: capacity)
+    }
+
+    func sampleRate() -> Double {
+        sharedSink.sampleRate()
+    }
+}
+
+// MARK: - C entrypoints (unchanged API from the Rust side's perspective)
 
 @_cdecl("lezat_sysaudio_supported")
 public func lezat_sysaudio_supported() -> Int32 {
-    if #available(macOS 13.0, *) {
+    if #available(macOS 14.2, *) {
         return 1
-    } else {
-        return 0
     }
+    return 0
 }
 
 @_cdecl("lezat_sysaudio_start")
 public func lezat_sysaudio_start() -> Int32 {
-    guard #available(macOS 13.0, *) else { return -1 }
-
-    // Bridge the async start() into a synchronous return by blocking a
-    // dedicated dispatch semaphore. The caller (Rust) is already on its
-    // own thread, so blocking here doesn't stall the UI.
-    let semaphore = DispatchSemaphore(value: 0)
-    let box = ResultBox()
-
-    Task.detached { [box] in
-        do {
-            try await SystemAudioCapture.shared.start()
-        } catch {
-            NSLog("LezatSystemAudio start failed: \(error.localizedDescription)")
-            box.set(-2)
-        }
-        semaphore.signal()
+    guard #available(macOS 14.2, *) else { return -1 }
+    do {
+        try SystemAudioCapture.shared.start()
+        return 0
+    } catch {
+        NSLog("LezatSystemAudio start failed: \(error.localizedDescription)")
+        return -2
     }
-
-    semaphore.wait()
-    return box.get()
 }
 
 @_cdecl("lezat_sysaudio_stop")
 public func lezat_sysaudio_stop() -> Int32 {
-    guard #available(macOS 13.0, *) else { return -1 }
-    let semaphore = DispatchSemaphore(value: 0)
-    Task.detached {
-        await SystemAudioCapture.shared.stop()
-        semaphore.signal()
-    }
-    semaphore.wait()
+    guard #available(macOS 14.2, *) else { return -1 }
+    SystemAudioCapture.shared.stop()
     return 0
 }
 
@@ -317,7 +343,7 @@ public func lezat_sysaudio_drain(
     _ capacity: Int32,
     _ outLen: UnsafeMutablePointer<Int32>?
 ) -> Int32 {
-    guard #available(macOS 13.0, *), let out, let outLen else { return -1 }
+    guard #available(macOS 14.2, *), let out, let outLen else { return -1 }
     let n = SystemAudioCapture.shared.drain(into: out, capacity: Int(capacity))
     outLen.pointee = Int32(n)
     return 0
@@ -325,6 +351,6 @@ public func lezat_sysaudio_drain(
 
 @_cdecl("lezat_sysaudio_sample_rate")
 public func lezat_sysaudio_sample_rate() -> Int32 {
-    guard #available(macOS 13.0, *) else { return 0 }
+    guard #available(macOS 14.2, *) else { return 0 }
     return Int32(SystemAudioCapture.shared.sampleRate())
 }
