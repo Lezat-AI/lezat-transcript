@@ -159,11 +159,18 @@ fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, initial_r
     let mut cached_rate = initial_rate;
     let mut first_sample_logged = false;
     let mut ticks_since_rate_check: u32 = 0;
+    // Heartbeat counters so we can see whether the poll loop is working and
+    // whether any samples have come through since the last second. We log
+    // these every ~1 s regardless of whether samples arrived — it's the only
+    // way to distinguish "stream never delivers samples" from "loop crashed
+    // silently" from handy.log alone (Swift NSLog is suppressed for hardened
+    // runtime apps).
+    let mut polls_since_heartbeat: u32 = 0;
+    let mut samples_this_second: u64 = 0;
+    let mut total_samples: u64 = 0;
 
     while !stop_flag.load(Ordering::SeqCst) {
-        // Re-read the native rate once a second — ScreenCaptureKit sets it
-        // only when the first real audio buffer arrives, which can be after
-        // we've already opened. Cheap FFI call so checking regularly is fine.
+        polls_since_heartbeat += 1;
         ticks_since_rate_check += 1;
         if ticks_since_rate_check >= 50 {
             ticks_since_rate_check = 0;
@@ -175,6 +182,18 @@ fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, initial_r
                 );
                 cached_rate = r as u32;
             }
+        }
+
+        if polls_since_heartbeat >= 50 {
+            info!(
+                "sysaudio heartbeat: polls={polls_since_heartbeat}, \
+                 samples_this_sec={samples_this_second}, \
+                 total={total_samples}, rate={cached_rate}, \
+                 supported={}",
+                unsafe { lezat_sysaudio_supported() }
+            );
+            polls_since_heartbeat = 0;
+            samples_this_second = 0;
         }
 
         let mut out_len: i32 = 0;
@@ -195,6 +214,9 @@ fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, initial_r
             thread::sleep(POLL_INTERVAL);
             continue;
         }
+
+        samples_this_second += n as u64;
+        total_samples += n as u64;
 
         if !first_sample_logged {
             info!(
