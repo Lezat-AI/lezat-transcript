@@ -7,8 +7,11 @@
 //!   * stream transcript chunks to the frontend as they become available
 //!   * persist to the `meetings` table on stop
 //!
-//! This first cut is **mic-only**. System-audio capture (WASAPI loopback on
-//! Windows, ScreenCaptureKit/BlackHole on macOS) lands in a follow-up.
+//! The mic is always captured via cpal. System audio (the other side of a
+//! call) may come from either:
+//!   * cpal — macOS BlackHole / Linux PulseAudio monitor source
+//!   * WASAPI loopback — Windows default render endpoint (zero install)
+//! See `audio_toolkit::system_audio` for source resolution.
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
@@ -24,11 +27,65 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
-use crate::audio_toolkit::system_audio::{resolve_system_audio_device, SystemAudioStatus};
+use crate::audio_toolkit::system_audio::{
+    resolve_system_audio_device, SystemAudioSource, SystemAudioStatus,
+};
 use crate::audio_toolkit::{list_input_devices, AudioRecorder};
+#[cfg(target_os = "windows")]
+use crate::audio_toolkit::wasapi_loopback::WasapiLoopbackRecorder;
 use crate::managers::transcription::TranscriptionManager;
 use crate::portable;
 use crate::settings::get_settings;
+
+/// A per-source capture backend. Unified `start/stop/close` surface so the
+/// meeting recording loop doesn't care whether samples come from cpal or
+/// WASAPI.
+enum SourceCapture {
+    Cpal(AudioRecorder),
+    #[cfg(target_os = "windows")]
+    Wasapi(WasapiLoopbackRecorder),
+}
+
+impl SourceCapture {
+    fn start(&self) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        match self {
+            SourceCapture::Cpal(r) => r.start(),
+            #[cfg(target_os = "windows")]
+            SourceCapture::Wasapi(r) => r.start().map_err(|e| e.into()),
+        }
+    }
+
+    fn stop(&self) -> std::result::Result<Vec<f32>, Box<dyn std::error::Error>> {
+        match self {
+            SourceCapture::Cpal(r) => r.stop(),
+            #[cfg(target_os = "windows")]
+            SourceCapture::Wasapi(r) => r.stop().map_err(|e| e.into()),
+        }
+    }
+
+    fn close(&mut self) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        match self {
+            SourceCapture::Cpal(r) => r.close(),
+            #[cfg(target_os = "windows")]
+            SourceCapture::Wasapi(r) => r.close().map_err(|e| e.into()),
+        }
+    }
+}
+
+fn open_cpal(device: Option<cpal::Device>) -> Result<SourceCapture> {
+    let mut r = AudioRecorder::new()
+        .map_err(|e| anyhow!("AudioRecorder::new failed: {e}"))?;
+    r.open(device)
+        .map_err(|e| anyhow!("Recorder open failed: {e}"))?;
+    Ok(SourceCapture::Cpal(r))
+}
+
+#[cfg(target_os = "windows")]
+fn open_wasapi() -> Result<SourceCapture> {
+    let mut r = WasapiLoopbackRecorder::new()?;
+    r.open(None)?;
+    Ok(SourceCapture::Wasapi(r))
+}
 
 /// How much audio we buffer before handing it to Whisper.
 /// Shorter → snappier live transcript but smaller context per chunk.
@@ -238,32 +295,53 @@ impl MeetingManager {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let mut handles = Vec::new();
 
-        // Always spawn the microphone loop.
+        // Always spawn the microphone loop (cpal).
         let mic_device = resolve_mic_device(&settings);
+        let mic_capture = open_cpal(mic_device)
+            .map_err(|e| anyhow!("Failed to open mic capture: {e}"))?;
         handles.push(spawn_recording_loop(
             self.app.clone(),
             self.store.clone(),
             id,
             stop_flag.clone(),
             "mic".to_string(),
-            mic_device,
+            mic_capture,
         )?);
 
         // Optionally spawn the system-audio loop.
         if settings.capture_system_audio {
             match resolve_system_audio_device() {
-                SystemAudioStatus::Available { device, label } => {
-                    info!(
-                        "Meeting {id}: capturing system audio via '{label}'"
-                    );
-                    handles.push(spawn_recording_loop(
-                        self.app.clone(),
-                        self.store.clone(),
-                        id,
-                        stop_flag.clone(),
-                        "system".to_string(),
-                        Some(device),
-                    )?);
+                SystemAudioStatus::Available { source, label } => {
+                    info!("Meeting {id}: capturing system audio via '{label}'");
+                    let capture_result: Result<SourceCapture> = match source {
+                        SystemAudioSource::CpalDevice(dev) => open_cpal(Some(dev)),
+                        #[cfg(target_os = "windows")]
+                        SystemAudioSource::WasapiLoopback => open_wasapi(),
+                        #[cfg(not(target_os = "windows"))]
+                        SystemAudioSource::WasapiLoopback => {
+                            // Defensive: resolve_system_audio_device should never
+                            // return WasapiLoopback off Windows.
+                            Err(anyhow!("WasapiLoopback requested on non-Windows build"))
+                        }
+                    };
+                    match capture_result {
+                        Ok(capture) => handles.push(spawn_recording_loop(
+                            self.app.clone(),
+                            self.store.clone(),
+                            id,
+                            stop_flag.clone(),
+                            "system".to_string(),
+                            capture,
+                        )?),
+                        Err(e) => {
+                            warn!("Meeting {id}: failed to open system-audio capture — {e}");
+                            let _ = (MeetingStateEvent::Error {
+                                meeting_id: Some(id),
+                                message: format!("System audio capture failed: {e}"),
+                            })
+                            .emit(&self.app);
+                        }
+                    }
                 }
                 SystemAudioStatus::NotConfigured { install_hint } => {
                     warn!(
@@ -369,17 +447,15 @@ fn spawn_recording_loop(
     meeting_id: i64,
     stop_flag: Arc<AtomicBool>,
     source: String,
-    device: Option<cpal::Device>,
+    capture: SourceCapture,
 ) -> Result<JoinHandle<()>> {
     let handle = thread::Builder::new()
         .name(format!("meeting-{meeting_id}-{source}"))
         .spawn(move || {
             if let Err(e) =
-                run_recording_loop(&app, &store, meeting_id, &stop_flag, &source, device)
+                run_recording_loop(&app, &store, meeting_id, &stop_flag, &source, capture)
             {
-                error!(
-                    "Meeting {meeting_id} [{source}] recording loop failed: {e}"
-                );
+                error!("Meeting {meeting_id} [{source}] recording loop failed: {e}");
                 let _ = (MeetingStateEvent::Error {
                     meeting_id: Some(meeting_id),
                     message: format!("{source}: {e}"),
@@ -396,14 +472,8 @@ fn run_recording_loop(
     meeting_id: i64,
     stop_flag: &Arc<AtomicBool>,
     source: &str,
-    device: Option<cpal::Device>,
+    mut recorder: SourceCapture,
 ) -> Result<()> {
-    let mut recorder = AudioRecorder::new()
-        .map_err(|e| anyhow!("AudioRecorder::new failed: {e}"))?;
-    recorder
-        .open(device)
-        .map_err(|e| anyhow!("Recorder open failed: {e}"))?;
-
     info!("Meeting {meeting_id} [{source}]: recorder opened, starting capture loop");
 
     let chunk_start = Instant::now();

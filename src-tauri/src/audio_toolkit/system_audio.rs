@@ -25,9 +25,21 @@ use cpal::Device;
 
 use crate::audio_toolkit::list_input_devices;
 
+/// How we'll actually read samples once a source is "Available".
+///
+/// - `CpalDevice` wraps a regular cpal input device (used for the macOS
+///   BlackHole path and the Linux PulseAudio monitor source).
+/// - `WasapiLoopback` means "use the dedicated WASAPI loopback recorder";
+///   no device handle is needed because the recorder always targets the
+///   current default render endpoint.
+pub enum SystemAudioSource {
+    CpalDevice(Device),
+    WasapiLoopback,
+}
+
 pub enum SystemAudioStatus {
-    /// Capture is available and a device has been resolved.
-    Available { device: Device, label: String },
+    /// Capture is available and a source has been resolved.
+    Available { source: SystemAudioSource, label: String },
     /// Capture is possible in principle but the required helper isn't set up.
     /// `install_hint` is a short, user-facing instruction.
     NotConfigured { install_hint: String },
@@ -80,7 +92,7 @@ access, then relaunch."
 
     match candidate {
         Some(info) => SystemAudioStatus::Available {
-            device: info.device.clone(),
+            source: SystemAudioSource::CpalDevice(info.device.clone()),
             label: info.name.clone(),
         },
         None => SystemAudioStatus::NotConfigured {
@@ -113,7 +125,7 @@ PulseAudio or PipeWire is running, then relaunch Lezat."
 
     match candidate {
         Some(info) => SystemAudioStatus::Available {
-            device: info.device.clone(),
+            source: SystemAudioSource::CpalDevice(info.device.clone()),
             label: info.name.clone(),
         },
         None => SystemAudioStatus::NotConfigured {
@@ -127,12 +139,11 @@ PulseAudio or PipeWire is running, then relaunch Lezat."
 
 #[cfg(target_os = "windows")]
 fn resolve_windows() -> SystemAudioStatus {
-    // TODO(v0.3.1): Implement WASAPI loopback via the `wasapi` crate.
-    // Render-device loopback gives us the full system mix with zero user
-    // install — much cleaner than the BlackHole path used on macOS.
-    SystemAudioStatus::NotYetSupported {
-        message: "Windows system-audio capture lands in the next update. \
-For now only the microphone side is recorded during meetings."
-            .to_string(),
+    // WASAPI loopback targets the default render endpoint, which Windows
+    // maintains as whatever output the user has set as default. No device
+    // handle needed — the recorder resolves the endpoint each open().
+    SystemAudioStatus::Available {
+        source: SystemAudioSource::WasapiLoopback,
+        label: "Default Windows output (WASAPI loopback)".to_string(),
     }
 }

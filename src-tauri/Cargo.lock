@@ -3053,7 +3053,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "lezat-transcript"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3108,6 +3108,7 @@ dependencies = [
  "tokio",
  "transcribe-rs",
  "vad-rs",
+ "wasapi",
  "windows 0.61.3",
  "winreg 0.55.0",
 ]
@@ -7324,6 +7325,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
 dependencies = [
  "try-lock",
+]
+
+[[package]]
+name = "wasapi"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e942fc1675554b33c1aaa766406485ed7abe9831ecdcc11085f6e184c83df0d"
+dependencies = [
+ "log",
+ "num-integer",
+ "thiserror 2.0.18",
+ "widestring",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

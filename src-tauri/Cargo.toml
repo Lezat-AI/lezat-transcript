@@ -1,6 +1,6 @@
 [package]
 name = "lezat-transcript"
-version = "0.1.9"
+version = "0.1.10"
 description = "Lezat Transcript"
 authors = ["Lezat Team", "cjpais (upstream: Handy)"]
 edition = "2021"
@@ -97,6 +97,9 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.55"
+# WASAPI loopback — used by audio_toolkit::wasapi_loopback to capture the
+# system audio mix for Meeting Mode without any user-installed driver.
+wasapi = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
