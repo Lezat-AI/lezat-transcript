@@ -388,6 +388,20 @@ impl MeetingManager {
         let title = title.unwrap_or_else(|| default_title(started_at));
         let id = self.store.insert(&title, started_at)?;
 
+        // Make sure the transcription engine is hot before we start capturing.
+        // The dictation flow auto-loads the model on the first hotkey press,
+        // but meetings go straight to `transcribe()` and used to fail with
+        // "Model is not loaded for transcription" if the user hadn't used
+        // dictation first. Load-if-needed here is idempotent.
+        if let Some(tm) = self.app.try_state::<Arc<TranscriptionManager>>() {
+            if let Err(e) = tm.load_model(&settings.selected_model) {
+                warn!(
+                    "Meeting {id}: failed to preload transcription model {}: {e}",
+                    settings.selected_model
+                );
+            }
+        }
+
         // Prep a per-meeting directory for raw WAV files, iff audio persistence
         // is enabled. Store the path on the meeting record so the UI can resolve
         // playback files later.

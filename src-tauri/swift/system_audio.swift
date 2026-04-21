@@ -84,10 +84,14 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 
         let newStream = SCStream(filter: filter, configuration: config, delegate: self)
         try newStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: nil)
-        // Video output intentionally omitted. SCStream works audio-only when
-        // capturesAudio is set on the config; adding an unconsumed screen
-        // output handler can stall the stream because CMSampleBuffers held
-        // alive by the handler back-pressure the audio side.
+        // SCStream requires a video output to be registered even for audio-
+        // only capture — without it the `.audio` delegate callback never
+        // fires and we'd sit on zero samples forever. The video frames are
+        // discarded in the delegate (see `stream(_:didOutputSampleBuffer:of:)`
+        // which early-returns on anything != .audio). With config.width=2,
+        // height=2 and minimumFrameInterval=1s the GPU cost is effectively
+        // nil.
+        try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: nil)
         try await newStream.startCapture()
 
         NSLog("LezatSystemAudio: SCStream.startCapture() succeeded")
