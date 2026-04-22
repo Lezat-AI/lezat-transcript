@@ -7,11 +7,12 @@ import {
   checkMicrophonePermission,
   requestMicrophonePermission,
 } from "tauri-plugin-macos-permissions-api";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import HandyTextLogo from "../icons/HandyTextLogo";
-import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
+import { Keyboard, Mic, Check, Loader2, Speaker, ExternalLink } from "lucide-react";
 
 interface AccessibilityOnboardingProps {
   onComplete: () => void;
@@ -441,6 +442,42 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                       : t("onboarding.permissions.grant")}
                   </button>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* System Audio Recording Card (macOS only, optional) */}
+        {isMacOS && (
+          <div className="w-full p-4 rounded-lg bg-white/5 border border-mid-gray/20">
+            <div className="flex items-center gap-4">
+              <div className="p-3 rounded-full bg-lezat-sage/20 shrink-0">
+                <Speaker className="w-6 h-6 text-lezat-sage" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium text-text">
+                    System Audio Recording
+                  </h3>
+                  <span className="text-[9px] font-bold tracking-widest uppercase py-0.5 px-1.5 rounded bg-mid-gray/20 text-mid-gray">
+                    Optional
+                  </span>
+                </div>
+                <p className="text-sm text-text/60 mb-3">
+                  Lets Meeting Mode capture the other side of a call (Zoom,
+                  Meet, etc.). Skip if you only plan to record your own voice.
+                </p>
+                <button
+                  onClick={() =>
+                    openUrl(
+                      "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+                    )
+                  }
+                  className="px-4 py-2 rounded-lg bg-lezat-sage hover:opacity-90 text-[#0d0d1a] text-sm font-medium transition-colors inline-flex items-center gap-1.5"
+                >
+                  Open System Settings
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
           </div>
