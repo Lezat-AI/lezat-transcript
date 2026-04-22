@@ -209,9 +209,14 @@ fn build_apple_intelligence_bridge() {
     // Use macOS 11.0 as deployment target for compatibility
     // The @available(macOS 26.0, *) checks in Swift handle runtime availability
     // Weak linking for FoundationModels is handled via cargo:rustc-link-arg below
+    // -parse-as-library stops swiftc from emitting its implicit `_main`
+    // entry point. Without this, force-loading the static lib pulls that
+    // stub in and collides with Rust's main (bin target). See v0.1.30
+    // failure.
     let status = Command::new("xcrun")
         .args([
             "swiftc",
+            "-parse-as-library",
             "-target",
             "arm64-apple-macosx11.0",
             "-sdk",
@@ -376,9 +381,13 @@ fn build_system_audio_bridge() {
         .expect("Unable to determine Swift toolchain lib directory");
     let sdk_swift_lib = Path::new(&sdk_path).join("usr/lib/swift");
 
+    // -parse-as-library: stop swiftc from emitting `_main`. Required
+    // because we -force_load this archive below, which pulls in every
+    // symbol including the implicit `_main` stub swiftc adds otherwise.
     let status = Command::new("xcrun")
         .args([
             "swiftc",
+            "-parse-as-library",
             "-target",
             &format!("{target_arch}-apple-macosx11.0"),
             "-sdk",

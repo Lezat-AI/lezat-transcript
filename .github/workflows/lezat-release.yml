@@ -235,9 +235,15 @@ jobs:
                   print(f"WARN: skipping {artifact_dir.name} - missing sig or bundle", file=sys.stderr)
                   continue
               sig = sig_files[0].read_text().strip()
-              bundle_url = f"{base_url}/{bundle_files[0].name}"
+              # GitHub normalizes spaces → dots on asset upload
+              # (productName "Lezat Transcript" → "Lezat.Transcript..."),
+              # so latest.json URLs must match the uploaded filename,
+              # not the filename on the build runner. Without this the
+              # updater gets a 404 and the UI silently resets.
+              asset_name = bundle_files[0].name.replace(" ", ".")
+              bundle_url = f"{base_url}/{asset_name}"
               platforms[key] = {"signature": sig, "url": bundle_url}
-              print(f"{key} -> {bundle_files[0].name}")
+              print(f"{key} -> {asset_name}")
 
           if not platforms:
               print("No updater artifacts were produced for any platform — skipping latest.json upload.")
