@@ -419,7 +419,17 @@ fn build_system_audio_bridge() {
     }
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
-    println!("cargo:rustc-link-lib=static=system_audio");
+    // -force_load is required for Swift static libraries: without it, the
+    // linker dead-strips the module initializer stubs (`_swift_FORCE_LOAD_$`
+    // and friends), Swift runtime setup never runs, and top-level `let`
+    // globals stay nil at runtime. That's what killed v0.1.27 and v0.1.29 —
+    // calling into any top-level singleton returned a null pointer and the
+    // next method dispatch SIGSEGV'd. Force-loading the archive keeps all
+    // Swift module-init symbols alive.
+    println!(
+        "cargo:rustc-link-arg=-Wl,-force_load,{}",
+        static_lib_path.display()
+    );
     println!(
         "cargo:rustc-link-search=native={}",
         toolchain_swift_lib.display()

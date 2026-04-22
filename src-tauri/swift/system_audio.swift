@@ -1,39 +1,49 @@
 // System-audio capture via CoreAudio Process Taps (macOS 14.2+).
 //
-// Rewritten for v0.1.29 to stop the Tahoe crash from v0.1.27:
-//   - All CoreAudio work runs on a background DispatchQueue so Tauri's IPC
-//     handler on the main thread never sees a synchronous crash.
-//   - The @_cdecl entrypoints block on a DispatchSemaphore with a 5-second
-//     timeout — if the Swift side hangs or faults, Rust gets a clean error
-//     instead of a wedged UI.
-//   - `CATapDescription()` base initializer is used with properties set
-//     explicitly; the v0.1.27 `stereoGlobalTapButExcludeProcesses:[]`
-//     convenience init returned a null bridge on Tahoe and the next
-//     property-set segfaulted.
-//   - Every CoreAudio OSStatus is checked; missing/zero AudioObjectIDs
-//     throw a Swift error rather than being passed on to the next call.
-//   - NSLog at every step so a future regression tells us WHICH line died,
-//     not just that we died.
+// v0.1.30 rebuild — belt and braces after v0.1.27 and v0.1.29 both SIGSEGV'd
+// in different Swift-runtime paths:
+//   * v0.1.27: CATapDescription convenience init returned a null bridge
+//     object on Tahoe → next property set segfaulted at offset 0x10.
+//   * v0.1.29: top-level `private let queue = DispatchQueue(...)` never
+//     actually initialized → dispatch_async faulted at offset 0x54.
+// Root cause of the second: Swift static libraries need `-force_load` so
+// the linker preserves the module initializer stubs. Without it, top-level
+// Swift state stays uninitialized and any access crashes at a fixed
+// offset. build.rs now passes -force_load.
 //
-// If Process Taps are genuinely unavailable (older macOS, beta quirk), we
-// fail-soft: lezat_sysaudio_supported() detects and returns 0; Rust falls
-// back to BlackHole. No crash, just "system audio not configured" in the UI.
+// Belt: this file avoids top-level `let` state entirely anyway. Everything
+// lives on a class as a `static let` (lazy-initialized via swift_once at
+// first access) so even if the runtime-init fix regresses we don't crash
+// until someone actually tries to use system audio.
+//
+// Braces: the @_cdecl entrypoints run synchronously — no DispatchQueue,
+// no DispatchSemaphore. The CoreAudio setup takes < 1 s on any modern
+// Mac; blocking the caller is fine and removes an entire crash surface.
+//
+// If something still goes wrong, NSLog("LezatSysAudio: step N — ...") at
+// every step will tell us exactly where.
 
 import AVFoundation
 import CoreAudio
 import CoreMedia
 import Foundation
 
-// MARK: - Thread-safe primitives
+// MARK: - Error helper
 
-private final class ResultBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Int32 = 0
-    func set(_ v: Int32) { lock.lock(); value = v; lock.unlock() }
-    func get() -> Int32 { lock.lock(); defer { lock.unlock() }; return value }
+private func makeErr(_ msg: String) -> NSError {
+    NSLog("LezatSysAudio ERROR: \(msg)")
+    return NSError(
+        domain: "LezatSystemAudio", code: -1,
+        userInfo: [NSLocalizedDescriptionKey: msg]
+    )
 }
 
+// MARK: - Sample sink (shared buffer between Swift IO callback and Rust poll thread)
+
 private final class SampleSink: @unchecked Sendable {
+    // swift_once-backed lazy singleton — never nil when accessed.
+    static let shared = SampleSink()
+
     private let lock = NSLock()
     private var buffer: [Float] = []
     private var currentRate: Double = 0
@@ -71,19 +81,6 @@ private final class SampleSink: @unchecked Sendable {
     }
 }
 
-private let sharedSink = SampleSink()
-private let sysaudioQueue = DispatchQueue(
-    label: "co.lezat.transcript.sysaudio", qos: .userInitiated
-)
-
-private func makeErr(_ msg: String) -> NSError {
-    NSLog("LezatSysAudio ERROR: \(msg)")
-    return NSError(
-        domain: "LezatSystemAudio", code: -1,
-        userInfo: [NSLocalizedDescriptionKey: msg]
-    )
-}
-
 // MARK: - Process Tap backend
 
 @available(macOS 14.2, *)
@@ -93,14 +90,14 @@ private final class ProcessTapBackend: @unchecked Sendable {
     private var ioProcID: AudioDeviceIOProcID?
 
     func start() throws {
-        NSLog("LezatSysAudio: step 1 — checking CATapDescription class")
+        NSLog("LezatSysAudio: step 1 — CATapDescription class check")
         guard NSClassFromString("CATapDescription") != nil else {
             throw makeErr("CATapDescription class not found at runtime")
         }
 
         NSLog("LezatSysAudio: step 2 — CATapDescription() init")
         let tapDesc = CATapDescription()
-        NSLog("LezatSysAudio: step 3 — setting tapDesc.processes = []")
+        NSLog("LezatSysAudio: step 3 — tapDesc.processes = []")
         tapDesc.processes = []
         NSLog("LezatSysAudio: step 4 — muteBehavior = .unmuted")
         tapDesc.muteBehavior = .unmuted
@@ -110,7 +107,7 @@ private final class ProcessTapBackend: @unchecked Sendable {
         tapDesc.isExclusive = false
         NSLog("LezatSysAudio: step 7 — isMixdown = true")
         tapDesc.isMixdown = true
-        NSLog("LezatSysAudio: step 8 — isMono = false (want stereo)")
+        NSLog("LezatSysAudio: step 8 — isMono = false")
         tapDesc.isMono = false
 
         NSLog("LezatSysAudio: step 9 — AudioHardwareCreateProcessTap")
@@ -123,7 +120,7 @@ private final class ProcessTapBackend: @unchecked Sendable {
             throw makeErr("AudioHardwareCreateProcessTap returned 0 tapID")
         }
         tapID = createdTapID
-        NSLog("LezatSysAudio: step 10 — tap created, id=\(tapID)")
+        NSLog("LezatSysAudio: step 10 — tap id=\(tapID)")
 
         NSLog("LezatSysAudio: step 11 — reading kAudioTapPropertyUID")
         var tapUID: CFString?
@@ -144,9 +141,9 @@ private final class ProcessTapBackend: @unchecked Sendable {
             destroy()
             throw makeErr("Tap UID came back nil")
         }
-        NSLog("LezatSysAudio: step 12 — tap UID read OK")
+        NSLog("LezatSysAudio: step 12 — tap UID OK")
 
-        NSLog("LezatSysAudio: step 13 — building aggregate device dict")
+        NSLog("LezatSysAudio: step 13 — aggregate device dict")
         let aggregateUID = UUID().uuidString
         let aggDict: [String: Any] = [
             kAudioAggregateDeviceNameKey as String: "Lezat System Audio Tap",
@@ -176,9 +173,9 @@ private final class ProcessTapBackend: @unchecked Sendable {
             throw makeErr("AudioHardwareCreateAggregateDevice returned 0 aggID")
         }
         aggregateID = createdAggID
-        NSLog("LezatSysAudio: step 15 — aggregate device id=\(aggregateID)")
+        NSLog("LezatSysAudio: step 15 — aggregate id=\(aggregateID)")
 
-        NSLog("LezatSysAudio: step 16 — querying stream format")
+        NSLog("LezatSysAudio: step 16 — query stream format")
         var asbd = AudioStreamBasicDescription()
         var asbdSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         var asbdAddr = AudioObjectPropertyAddress(
@@ -191,10 +188,10 @@ private final class ProcessTapBackend: @unchecked Sendable {
         )
         let seededRate = (formatErr == noErr && asbd.mSampleRate > 0)
             ? asbd.mSampleRate : 48_000
-        NSLog("LezatSysAudio: step 17 — stream rate=\(seededRate) Hz")
-        sharedSink.push([], rate: seededRate)
+        NSLog("LezatSysAudio: step 17 — rate=\(seededRate) Hz")
+        SampleSink.shared.push([], rate: seededRate)
 
-        NSLog("LezatSysAudio: step 18 — registering IOProc")
+        NSLog("LezatSysAudio: step 18 — AudioDeviceCreateIOProcID")
         let ctx = Unmanaged.passUnretained(self).toOpaque()
         var procID: AudioDeviceIOProcID?
         let procErr = AudioDeviceCreateIOProcID(
@@ -226,7 +223,7 @@ private final class ProcessTapBackend: @unchecked Sendable {
             destroy()
             throw makeErr("AudioDeviceStart failed: OSStatus=\(startErr)")
         }
-        NSLog("LezatSysAudio: start completed successfully — streaming")
+        NSLog("LezatSysAudio: start completed — stream live")
     }
 
     private func handleInput(_ bufferList: UnsafePointer<AudioBufferList>) {
@@ -236,11 +233,10 @@ private final class ProcessTapBackend: @unchecked Sendable {
         guard let first = abl.first else { return }
         let byteCount = Int(first.mDataByteSize)
         guard let rawData = first.mData, byteCount > 0 else { return }
-
         let floatCount = byteCount / MemoryLayout<Float>.size
         let floats = rawData.bindMemory(to: Float.self, capacity: floatCount)
         var mono: [Float] = []
-        let channels = 2  // CATapDescription isMixdown + not-mono -> stereo
+        let channels = 2
         if floatCount >= channels {
             mono.reserveCapacity(floatCount / channels)
             var i = 0
@@ -252,7 +248,7 @@ private final class ProcessTapBackend: @unchecked Sendable {
             mono.reserveCapacity(floatCount)
             for i in 0..<floatCount { mono.append(floats[i]) }
         }
-        sharedSink.push(mono, rate: 48_000)
+        SampleSink.shared.push(mono, rate: 48_000)
     }
 
     func stop() { destroy() }
@@ -274,17 +270,18 @@ private final class ProcessTapBackend: @unchecked Sendable {
     }
 }
 
-// MARK: - Capture holder
+// MARK: - Holder (lazy singleton)
 
 private final class SystemAudioCapture: @unchecked Sendable {
     static let shared = SystemAudioCapture()
+
     private let lock = NSLock()
     private var backend: AnyObject?
 
     func start() throws {
         lock.lock(); defer { lock.unlock() }
         if backend != nil { return }
-        sharedSink.reset()
+        SampleSink.shared.reset()
         if #available(macOS 14.2, *) {
             let b = ProcessTapBackend()
             try b.start()
@@ -300,11 +297,11 @@ private final class SystemAudioCapture: @unchecked Sendable {
             if let b = backend as? ProcessTapBackend { b.stop() }
         }
         backend = nil
-        sharedSink.reset()
+        SampleSink.shared.reset()
     }
 }
 
-// MARK: - C entrypoints
+// MARK: - C entrypoints — synchronous, no DispatchQueue reliance
 
 @_cdecl("lezat_sysaudio_supported")
 public func lezat_sysaudio_supported() -> Int32 {
@@ -315,40 +312,20 @@ public func lezat_sysaudio_supported() -> Int32 {
 @_cdecl("lezat_sysaudio_start")
 public func lezat_sysaudio_start() -> Int32 {
     guard #available(macOS 14.2, *) else { return -1 }
-
-    NSLog("LezatSysAudio: @_cdecl lezat_sysaudio_start — dispatching to bg queue")
-    let semaphore = DispatchSemaphore(value: 0)
-    let box = ResultBox()
-
-    sysaudioQueue.async {
-        do {
-            try SystemAudioCapture.shared.start()
-            box.set(0)
-        } catch {
-            NSLog("LezatSysAudio: start threw: \(error.localizedDescription)")
-            box.set(-2)
-        }
-        semaphore.signal()
+    NSLog("LezatSysAudio: @_cdecl start() entry")
+    do {
+        try SystemAudioCapture.shared.start()
+        return 0
+    } catch {
+        NSLog("LezatSysAudio: start threw: \(error.localizedDescription)")
+        return -2
     }
-
-    let result = semaphore.wait(timeout: .now() + .seconds(5))
-    if result == .timedOut {
-        NSLog("LezatSysAudio: start timed out after 5 s")
-        return -3
-    }
-    return box.get()
 }
 
 @_cdecl("lezat_sysaudio_stop")
 public func lezat_sysaudio_stop() -> Int32 {
     guard #available(macOS 14.2, *) else { return -1 }
-
-    let semaphore = DispatchSemaphore(value: 0)
-    sysaudioQueue.async {
-        SystemAudioCapture.shared.stop()
-        semaphore.signal()
-    }
-    _ = semaphore.wait(timeout: .now() + .seconds(3))
+    SystemAudioCapture.shared.stop()
     return 0
 }
 
@@ -359,7 +336,7 @@ public func lezat_sysaudio_drain(
     _ outLen: UnsafeMutablePointer<Int32>?
 ) -> Int32 {
     guard #available(macOS 14.2, *), let out, let outLen else { return -1 }
-    let n = sharedSink.drain(into: out, capacity: Int(capacity))
+    let n = SampleSink.shared.drain(into: out, capacity: Int(capacity))
     outLen.pointee = Int32(n)
     return 0
 }
@@ -367,5 +344,5 @@ public func lezat_sysaudio_drain(
 @_cdecl("lezat_sysaudio_sample_rate")
 public func lezat_sysaudio_sample_rate() -> Int32 {
     guard #available(macOS 14.2, *) else { return 0 }
-    return Int32(sharedSink.sampleRate())
+    return Int32(SampleSink.shared.sampleRate())
 }
