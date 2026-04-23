@@ -2,11 +2,31 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink, Save, Pencil } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink, Save, Pencil, Download } from "lucide-react";
 import { commands } from "@/bindings";
 import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
 import { AudioPlayer } from "../ui/AudioPlayer";
+
+/// Save-as dialog → backend copy. The backend command bypasses fs-scope
+/// constraints since the user-chosen destination can be anywhere on disk;
+/// validating + copying in Rust is simpler than expanding capabilities.
+async function downloadMeetingAudio(
+  meetingId: number,
+  track: "mic" | "system",
+  suggestedName: string,
+): Promise<void> {
+  const dest = await save({
+    defaultPath: suggestedName,
+    filters: [{ name: "WAV audio", extensions: ["wav"] }],
+  });
+  if (!dest) return;
+  const res = await commands.exportMeetingAudio(meetingId, track, dest);
+  if (res.status === "error") {
+    console.warn("export_meeting_audio failed:", res.error);
+  }
+}
 
 function meetingAudioSources(audioPath: string | null): { label: string; url: string }[] {
   if (!audioPath) return [];
@@ -477,14 +497,36 @@ export function MeetingsPage() {
               <h4 className="text-xs font-bold uppercase tracking-wide text-mid-gray">
                 Audio
               </h4>
-              {meetingAudioSources(viewing.audio_path).map((s) => (
-                <div key={s.label} className="flex items-center gap-3">
-                  <span className="text-xs text-mid-gray w-40 shrink-0">
-                    {s.label}
-                  </span>
-                  <AudioPlayer src={s.url} className="flex-1" />
-                </div>
-              ))}
+              {meetingAudioSources(viewing.audio_path).map((s) => {
+                const isMic = s.label.startsWith("Microphone");
+                const track: "mic" | "system" = isMic ? "mic" : "system";
+                const fname = isMic ? "mic.wav" : "system.wav";
+                return (
+                  <div key={s.label} className="flex items-center gap-3">
+                    <span className="text-xs text-mid-gray w-40 shrink-0">
+                      {s.label}
+                    </span>
+                    <AudioPlayer src={s.url} className="flex-1" />
+                    <button
+                      onClick={async () => {
+                        try {
+                          await downloadMeetingAudio(
+                            viewing.id,
+                            track,
+                            `${viewing.title} — ${fname}`,
+                          );
+                        } catch (e) {
+                          console.warn("download failed", e);
+                        }
+                      }}
+                      className="p-1.5 text-mid-gray hover:text-text rounded"
+                      title={`Download ${fname}`}
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -540,12 +582,35 @@ export function MeetingsPage() {
                     ) : null}
                   </div>
                 </div>
+                {m.audio_path && (
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      // Card-level shortcut: grab mic.wav (the user's own voice
+                      // — the most-asked-for export). System audio is reachable
+                      // from the detail view via per-source download buttons.
+                      try {
+                        await downloadMeetingAudio(
+                          m.id,
+                          "mic",
+                          `${m.title} — mic.wav`,
+                        );
+                      } catch (err) {
+                        console.warn("card download failed", err);
+                      }
+                    }}
+                    className="ml-1 p-1 text-mid-gray hover:text-text"
+                    title="Download mic audio"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDelete(m.id);
                   }}
-                  className="ml-2 p-1 text-mid-gray hover:text-red-500"
+                  className="ml-1 p-1 text-mid-gray hover:text-red-500"
                   title="Delete"
                 >
                   <Trash2 className="w-4 h-4" />

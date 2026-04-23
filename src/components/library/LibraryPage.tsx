@@ -1,11 +1,28 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Search, Trash2 } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { Search, Trash2, Download } from "lucide-react";
 import {
   commands,
   type HistoryEntry,
   type MeetingRecord,
 } from "@/bindings";
+
+async function downloadMeetingAudio(
+  meetingId: number,
+  track: "mic" | "system",
+  suggestedName: string,
+): Promise<void> {
+  const dest = await save({
+    defaultPath: suggestedName,
+    filters: [{ name: "WAV audio", extensions: ["wav"] }],
+  });
+  if (!dest) return;
+  const res = await commands.exportMeetingAudio(meetingId, track, dest);
+  if (res.status === "error") {
+    console.warn("export_meeting_audio failed:", res.error);
+  }
+}
 
 /// Unified "Library" view — merges dictation transcripts and meeting recordings
 /// into one timeline so users can find anything they've captured without
@@ -24,6 +41,9 @@ interface LibraryItem {
   timestamp: number; // unix seconds
   duration_ms?: number;
   transcript: string;
+  /// For meetings only: path to the directory holding mic.wav / system.wav.
+  /// Lets the row offer a download shortcut without a follow-up fetch.
+  audio_path?: string | null;
 }
 
 type Filter = "all" | "dictation" | "meeting";
@@ -46,6 +66,7 @@ function fromMeeting(rec: MeetingRecord): LibraryItem {
     timestamp: rec.started_at,
     duration_ms: rec.duration_ms,
     transcript: rec.transcript_text || "",
+    audio_path: rec.audio_path,
   };
 }
 
@@ -231,12 +252,32 @@ export function LibraryPage() {
                         : ""}
                     </div>
                   </div>
+                  {item.kind === "meeting" && item.audio_path && (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          await downloadMeetingAudio(
+                            item.id,
+                            "mic",
+                            `${item.title} — mic.wav`,
+                          );
+                        } catch (err) {
+                          console.warn("library card download failed", err);
+                        }
+                      }}
+                      className="ml-1 p-1 text-mid-gray hover:text-text shrink-0"
+                      title="Download mic audio"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDelete(item);
                     }}
-                    className="ml-2 p-1 text-mid-gray hover:text-red-500 shrink-0"
+                    className="ml-1 p-1 text-mid-gray hover:text-red-500 shrink-0"
                     title="Delete"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -252,7 +293,7 @@ export function LibraryPage() {
                         </span>
                       )}
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <button
                         onClick={() => copyTranscript(item.transcript)}
                         disabled={!item.transcript}
@@ -260,10 +301,48 @@ export function LibraryPage() {
                       >
                         Copy transcript
                       </button>
+                      {item.kind === "meeting" && item.audio_path && (
+                        <>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await downloadMeetingAudio(
+                                  item.id,
+                                  "mic",
+                                  `${item.title} — mic.wav`,
+                                );
+                              } catch (err) {
+                                console.warn("download mic failed", err);
+                              }
+                            }}
+                            className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 inline-flex items-center gap-1"
+                          >
+                            <Download className="w-3 h-3" />
+                            Mic audio
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await downloadMeetingAudio(
+                                  item.id,
+                                  "system",
+                                  `${item.title} — system.wav`,
+                                );
+                              } catch (err) {
+                                console.warn("download system failed", err);
+                              }
+                            }}
+                            className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 inline-flex items-center gap-1"
+                          >
+                            <Download className="w-3 h-3" />
+                            System audio
+                          </button>
+                        </>
+                      )}
                       <span className="text-xs text-mid-gray self-center italic">
                         {item.kind === "dictation"
-                          ? "Power actions (audio playback, retry, star) live in the History tab"
-                          : "Open the Meetings tab to see this meeting's full detail"}
+                          ? "Power actions (retry, star) live in the History tab"
+                          : "Open the Meetings tab for the full timeline"}
                       </span>
                     </div>
                   </div>

@@ -99,3 +99,45 @@ pub fn rename_meeting(
 ) -> Result<(), String> {
     mgr.store().rename(id, &title).map_err(|e| e.to_string())
 }
+
+/// Copy one of a meeting's audio tracks (mic.wav or system.wav) to a path
+/// the user picked via a save-as dialog. Done in Rust so the destination
+/// doesn't have to be inside the app's fs scope (the user may save anywhere).
+/// `track` must be either "mic" or "system".
+#[tauri::command]
+#[specta::specta]
+pub fn export_meeting_audio(
+    mgr: State<Arc<MeetingManager>>,
+    id: i64,
+    track: String,
+    destination: String,
+) -> Result<(), String> {
+    let filename = match track.as_str() {
+        "mic" => "mic.wav",
+        "system" => "system.wav",
+        other => return Err(format!("Unknown audio track: {other}")),
+    };
+
+    let record = mgr
+        .store()
+        .get(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Meeting {id} not found"))?;
+    let audio_dir = record
+        .audio_path
+        .ok_or_else(|| format!("Meeting {id} has no saved audio"))?;
+    let src = std::path::PathBuf::from(&audio_dir).join(filename);
+    if !src.exists() {
+        return Err(format!("{filename} does not exist for this meeting"));
+    }
+
+    let dest = std::path::PathBuf::from(&destination);
+    if let Some(parent) = dest.parent() {
+        if !parent.exists() {
+            return Err(format!("Destination directory does not exist: {}", parent.display()));
+        }
+    }
+    std::fs::copy(&src, &dest)
+        .map_err(|e| format!("Copy failed: {e}"))?;
+    Ok(())
+}

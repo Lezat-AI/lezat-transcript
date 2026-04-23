@@ -310,6 +310,36 @@ private final class ProcessTapBackend: @unchecked Sendable {
             "stream live, awaiting first IOProc callback"
         )
 
+        // ---- Step 14b: read the aggregate's NOMINAL sample rate. The tap's
+        // kAudioTapPropertyFormat reports a logical rate (e.g. 48 kHz) but
+        // the IOProc actually delivers at the aggregate's clock rate, which
+        // can differ wildly when the system output is a Bluetooth headset
+        // (HFP/SCO often clocks the aggregate at 16 kHz, A2DP at 44.1/48).
+        // Trusting the tap format produced 3× compressed audio in v0.1.35.
+        var aggRate: Float64 = 0
+        var aggRateSize = UInt32(MemoryLayout<Float64>.size)
+        var aggRateAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let aggRateErr = AudioObjectGetPropertyData(
+            aggregateID, &aggRateAddr, 0, nil, &aggRateSize, &aggRate
+        )
+        if aggRateErr == noErr && aggRate > 0 && abs(aggRate - streamRate) > 1 {
+            logStep(
+                "step 14b — aggregate nominal rate=\(aggRate) differs from " +
+                "tap-reported rate=\(streamRate); using aggregate rate"
+            )
+            streamRate = aggRate
+            SampleSink.shared.push([], rate: streamRate)
+        } else {
+            logStep(
+                "step 14b — aggregate nominal rate=\(aggRate) err=\(aggRateErr) " +
+                "(tap rate=\(streamRate))"
+            )
+        }
+
         // Schedule a callback-count probe at +2s so we know whether the IOProc
         // ever fired even if the user stops the meeting before sample drain.
         ioQueue.asyncAfter(deadline: .now() + 2) { [weak self] in

@@ -65,6 +65,16 @@ impl Drop for LoadingGuard {
 #[derive(Clone)]
 pub struct TranscriptionManager {
     engine: Arc<Mutex<Option<LoadedEngine>>>,
+    /// Serialises whole `transcribe()` calls. The pre-existing `engine`
+    /// mutex was being held, taken, and released inside transcribe so that
+    /// other code (is_model_loaded, load) wouldn't be blocked during a long
+    /// inference. That left a window where a second transcribe call could
+    /// see `engine == None` (taken by the first caller still running) and
+    /// fail with "Model is not loaded for transcription". Meeting Mode hits
+    /// this every cycle because mic and system tracks chunk in lockstep.
+    /// This mutex provides whole-call serialisation without preventing
+    /// loading-state queries.
+    inference_lock: Arc<Mutex<()>>,
     model_manager: Arc<ModelManager>,
     app_handle: AppHandle,
     current_model_id: Arc<Mutex<Option<String>>>,
@@ -79,6 +89,7 @@ impl TranscriptionManager {
     pub fn new(app_handle: &AppHandle, model_manager: Arc<ModelManager>) -> Result<Self> {
         let manager = Self {
             engine: Arc::new(Mutex::new(None)),
+            inference_lock: Arc::new(Mutex::new(())),
             model_manager,
             app_handle: app_handle.clone(),
             current_model_id: Arc::new(Mutex::new(None)),
@@ -444,6 +455,18 @@ impl TranscriptionManager {
                 "Simulated transcription failure (HANDY_FORCE_TRANSCRIPTION_FAILURE)"
             ));
         }
+
+        // Serialise the entire transcribe call. Without this, two concurrent
+        // callers (Meeting Mode mic + system tracks chunk together every
+        // ~12s) race on the engine mutex: caller A `take`s the engine and
+        // releases the mutex, caller B then sees `engine == None` and errors
+        // with "Model is not loaded". Holding `_inference` across the whole
+        // call queues B safely behind A while still leaving the engine
+        // mutex itself free for is_model_loaded() / load() probes.
+        let _inference = self
+            .inference_lock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
 
         // Update last activity timestamp
         self.touch_activity();
