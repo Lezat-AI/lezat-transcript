@@ -81,7 +81,7 @@ fn resolve_macos() -> SystemAudioStatus {
     if native_system_audio_supported() {
         return SystemAudioStatus::Available {
             source: SystemAudioSource::MacosNative,
-            label: "macOS ScreenCaptureKit (system audio)".to_string(),
+            label: "macOS CoreAudio Process Tap (system audio)".to_string(),
         };
     }
 

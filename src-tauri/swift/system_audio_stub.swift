@@ -5,6 +5,13 @@
 
 import Foundation
 
+@_cdecl("lezat_sysaudio_set_log_sink")
+public func lezat_sysaudio_set_log_sink(
+    _ cb: @convention(c) (UnsafePointer<CChar>) -> Void
+) {
+    // No-op in the stub.
+}
+
 @_cdecl("lezat_sysaudio_supported")
 public func lezat_sysaudio_supported() -> Int32 {
     return 0

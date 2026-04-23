@@ -12,7 +12,14 @@
 extern "C" {
 #endif
 
-// 1 = ScreenCaptureKit is available (macOS 13+), 0 = stub / unsupported.
+// Register a log sink. Swift step-by-step diagnostics are routed through
+// this callback into the Rust logger (handy.log) — NSLog under hardened
+// runtime goes nowhere visible in release builds. The callback receives a
+// NUL-terminated UTF-8 C string; do not retain.
+typedef void (*lezat_sysaudio_log_sink_t)(const char *msg);
+void lezat_sysaudio_set_log_sink(lezat_sysaudio_log_sink_t sink);
+
+// 1 = Process Taps available (macOS 14.2+), 0 = stub / unsupported.
 int32_t lezat_sysaudio_supported(void);
 
 // Begin capture of the system audio output. Non-blocking. Returns 0 on

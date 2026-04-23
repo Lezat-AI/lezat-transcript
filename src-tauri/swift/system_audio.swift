@@ -1,47 +1,79 @@
 // System-audio capture via CoreAudio Process Taps (macOS 14.2+).
 //
-// v0.1.30 rebuild — belt and braces after v0.1.27 and v0.1.29 both SIGSEGV'd
-// in different Swift-runtime paths:
-//   * v0.1.27: CATapDescription convenience init returned a null bridge
-//     object on Tahoe → next property set segfaulted at offset 0x10.
-//   * v0.1.29: top-level `private let queue = DispatchQueue(...)` never
-//     actually initialized → dispatch_async faulted at offset 0x54.
-// Root cause of the second: Swift static libraries need `-force_load` so
-// the linker preserves the module initializer stubs. Without it, top-level
-// Swift state stays uninitialized and any access crashes at a fixed
-// offset. build.rs now passes -force_load.
+// Major rewrite — three independent research passes against AudioCap (Gui
+// Rambo, Apple-blessed reference), audiotee (PR #14 fix for the exact "noErr
+// everywhere, IOProc never fires" Tahoe symptom we were hitting), and
+// AudioCaptureKit converged on the same set of changes:
 //
-// Belt: this file avoids top-level `let` state entirely anyway. Everything
-// lives on a class as a `static let` (lazy-initialized via swift_once at
-// first access) so even if the runtime-init fix regresses we don't crash
-// until someone actually tries to use system audio.
+//   1. Use the convenience init `CATapDescription(stereoGlobalTapButExcludeProcesses: [])`.
+//      The no-arg `CATapDescription()` + `processes = []` reads as "include
+//      exactly these zero processes" → tap nothing. This was our #1 bug.
 //
-// Braces: the @_cdecl entrypoints run synchronously — no DispatchQueue,
-// no DispatchSemaphore. The CoreAudio setup takes < 1 s on any modern
-// Mac; blocking the caller is fine and removes an entire crash surface.
+//   2. Set `tapDesc.uuid = UUID()` explicitly. The no-arg init may leave it
+//      nil/zero on Tahoe, breaking the tap↔aggregate matching that follows.
 //
-// If something still goes wrong, NSLog("LezatSysAudio: step N — ...") at
-// every step will tell us exactly where.
+//   3. In the aggregate's TapList, use `tapDesc.uuid.uuidString` — NOT the
+//      runtime `kAudioTapPropertyUID`. Apple's HAL matches sub-tap entries
+//      against the description UUID. Mismatch = silent, no error. (audiotee
+//      PR #14 is exactly this fix.)
+//
+//   4. Anchor the aggregate to the system's default output device via
+//      `kAudioAggregateDeviceMainSubDeviceKey` + `kAudioAggregateDeviceSubDeviceListKey`.
+//      Without a real sub-device, the aggregate has no clock and the IOProc
+//      cycle never ticks on Tahoe.
+//
+//   5. Use booleans (true/false) not CFNumbers (1/0) for the aggregate
+//      dictionary boolean keys. Tahoe's toll-free bridge has been observed
+//      rejecting numbers for these.
+//
+//   6. Read stream format off the TAP via `kAudioTapPropertyFormat` (scope
+//      Global), not off the aggregate's input scope. The latter often
+//      returns garbage or errors silently.
+//
+//   7. `AudioDeviceCreateIOProcIDWithBlock` + a dedicated DispatchQueue
+//      schedules more reliably against the HAL than the legacy IOProc with
+//      Unmanaged ctx (which also gave us a class of crashes earlier).
+//
+//   8. Respect the real channel count and `mFormatFlags`
+//      (kAudioFormatFlagIsNonInterleaved) in the IO callback. Hard-coding
+//      stereo+interleaved produces silence or garbage on many setups.
+//
+//   9. Route Swift logs into Rust's handy.log via a C callback. NSLog
+//      under hardened runtime goes to /dev/null in release builds, so the
+//      step-by-step diagnostics we added in v0.1.30 were invisible. The
+//      log-sink bridge means the next failure will be visible immediately.
+//
+// Confirmed NOT the issue (per all three research passes): ad-hoc signing,
+// missing entitlements. AudioCap works ad-hoc-signed; TCC tracks by cdhash.
 
 import AVFoundation
 import CoreAudio
 import CoreMedia
 import Foundation
 
-// MARK: - Error helper
+// MARK: - Log sink (Rust callback bridge)
+
+private typealias LezatLogSink = @convention(c) (UnsafePointer<CChar>) -> Void
+private nonisolated(unsafe) var logSink: LezatLogSink?
+
+private func logStep(_ msg: String) {
+    NSLog("LezatSysAudio: \(msg)")
+    if let sink = logSink {
+        msg.withCString { sink($0) }
+    }
+}
 
 private func makeErr(_ msg: String) -> NSError {
-    NSLog("LezatSysAudio ERROR: \(msg)")
+    logStep("ERROR: \(msg)")
     return NSError(
         domain: "LezatSystemAudio", code: -1,
         userInfo: [NSLocalizedDescriptionKey: msg]
     )
 }
 
-// MARK: - Sample sink (shared buffer between Swift IO callback and Rust poll thread)
+// MARK: - Sample sink (shared buffer between IOProc callback and Rust poll thread)
 
 private final class SampleSink: @unchecked Sendable {
-    // swift_once-backed lazy singleton — never nil when accessed.
     static let shared = SampleSink()
 
     private let lock = NSLock()
@@ -88,29 +120,32 @@ private final class ProcessTapBackend: @unchecked Sendable {
     private var tapID: AudioObjectID = 0
     private var aggregateID: AudioObjectID = 0
     private var ioProcID: AudioDeviceIOProcID?
+    private let ioQueue = DispatchQueue(label: "co.lezat.sysaudio.io", qos: .userInitiated)
+
+    // Real format learned from kAudioTapPropertyFormat at start time.
+    private var streamRate: Double = 48_000
+    private var channels: Int = 2
+    private var nonInterleaved: Bool = false
+
+    // Per-callback diagnostics.
+    private var ioCallbackCount: UInt64 = 0
+    private var emptyCallbackCount: UInt64 = 0
+    private var firstCallbackLogged = false
 
     func start() throws {
-        NSLog("LezatSysAudio: step 1 — CATapDescription class check")
-        guard NSClassFromString("CATapDescription") != nil else {
-            throw makeErr("CATapDescription class not found at runtime")
-        }
-
-        NSLog("LezatSysAudio: step 2 — CATapDescription() init")
-        let tapDesc = CATapDescription()
-        NSLog("LezatSysAudio: step 3 — tapDesc.processes = []")
-        tapDesc.processes = []
-        NSLog("LezatSysAudio: step 4 — muteBehavior = .unmuted")
+        // ---- Step 1: build the tap description with the convenience init
+        logStep("step 1 — CATapDescription(stereoGlobalTapButExcludeProcesses: [])")
+        let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        tapDesc.uuid = UUID()
+        tapDesc.name = "Lezat System Audio Tap"
         tapDesc.muteBehavior = .unmuted
-        NSLog("LezatSysAudio: step 5 — isPrivate = true")
         tapDesc.isPrivate = true
-        NSLog("LezatSysAudio: step 6 — isExclusive = false")
-        tapDesc.isExclusive = false
-        NSLog("LezatSysAudio: step 7 — isMixdown = true")
-        tapDesc.isMixdown = true
-        NSLog("LezatSysAudio: step 8 — isMono = false")
-        tapDesc.isMono = false
+        // Do NOT touch processes / isExclusive / isMixdown / isMono after
+        // this — the convenience init has already wired them correctly.
+        logStep("step 2 — tap uuid=\(tapDesc.uuid.uuidString)")
 
-        NSLog("LezatSysAudio: step 9 — AudioHardwareCreateProcessTap")
+        // ---- Step 3: create the tap
+        logStep("step 3 — AudioHardwareCreateProcessTap")
         var createdTapID: AudioObjectID = 0
         let err = AudioHardwareCreateProcessTap(tapDesc, &createdTapID)
         if err != noErr {
@@ -120,141 +155,254 @@ private final class ProcessTapBackend: @unchecked Sendable {
             throw makeErr("AudioHardwareCreateProcessTap returned 0 tapID")
         }
         tapID = createdTapID
-        NSLog("LezatSysAudio: step 10 — tap id=\(tapID)")
+        logStep("step 4 — tap created id=\(tapID)")
 
-        NSLog("LezatSysAudio: step 11 — reading kAudioTapPropertyUID")
-        var tapUID: CFString?
-        var propSize = UInt32(MemoryLayout<CFString?>.size)
-        var tapAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioTapPropertyUID,
+        // ---- Step 5: read the actual stream format off the TAP
+        logStep("step 5 — query kAudioTapPropertyFormat on tap")
+        var asbd = AudioStreamBasicDescription()
+        var asbdSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        var fmtAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        let uidErr = withUnsafeMutablePointer(to: &tapUID) { ptr -> OSStatus in
-            AudioObjectGetPropertyData(tapID, &tapAddr, 0, nil, &propSize, ptr)
+        let fmtErr = AudioObjectGetPropertyData(
+            tapID, &fmtAddr, 0, nil, &asbdSize, &asbd
+        )
+        if fmtErr == noErr && asbd.mSampleRate > 0 {
+            streamRate = asbd.mSampleRate
+            channels = max(1, Int(asbd.mChannelsPerFrame))
+            nonInterleaved = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+            logStep(
+                "step 6 — tap format rate=\(streamRate) ch=\(channels) " +
+                "nonInterleaved=\(nonInterleaved) flags=\(asbd.mFormatFlags) " +
+                "bytesPerFrame=\(asbd.mBytesPerFrame)"
+            )
+        } else {
+            logStep("step 6 — kAudioTapPropertyFormat err=\(fmtErr) — defaulting 48kHz/stereo/interleaved")
+        }
+        SampleSink.shared.push([], rate: streamRate)
+
+        // ---- Step 7: look up the default system output device UID — needed
+        // as the aggregate's clock anchor (MainSubDevice + SubDeviceList).
+        logStep("step 7 — query default system output device")
+        var sysOutID: AudioDeviceID = 0
+        var sysOutSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var sysOutAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let sysOutErr = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &sysOutAddr, 0, nil, &sysOutSize, &sysOutID
+        )
+        if sysOutErr != noErr || sysOutID == 0 {
+            destroy()
+            throw makeErr(
+                "Default system output device unavailable: err=\(sysOutErr) id=\(sysOutID)"
+            )
+        }
+        var outputUID: CFString?
+        var uidSize = UInt32(MemoryLayout<CFString?>.size)
+        var uidAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let uidErr = withUnsafeMutablePointer(to: &outputUID) { ptr in
+            AudioObjectGetPropertyData(sysOutID, &uidAddr, 0, nil, &uidSize, ptr)
         }
         if uidErr != noErr {
             destroy()
-            throw makeErr("Could not read tap UID: OSStatus=\(uidErr)")
+            throw makeErr("Could not read output device UID: OSStatus=\(uidErr)")
         }
-        guard let uid = tapUID else {
+        guard let outUIDCF = outputUID else {
             destroy()
-            throw makeErr("Tap UID came back nil")
+            throw makeErr("Default output UID came back nil")
         }
-        NSLog("LezatSysAudio: step 12 — tap UID OK")
+        let outUID = outUIDCF as String
+        logStep("step 8 — default output UID=\(outUID)")
 
-        NSLog("LezatSysAudio: step 13 — aggregate device dict")
+        // ---- Step 9: create the aggregate device — mirror AudioCap exactly
+        logStep("step 9 — AudioHardwareCreateAggregateDevice")
         let aggregateUID = UUID().uuidString
         let aggDict: [String: Any] = [
-            kAudioAggregateDeviceNameKey as String: "Lezat System Audio Tap",
-            kAudioAggregateDeviceUIDKey as String: aggregateUID,
-            kAudioAggregateDeviceIsPrivateKey as String: 1,
-            kAudioAggregateDeviceIsStackedKey as String: 0,
-            kAudioAggregateDeviceTapAutoStartKey as String: 1,
-            kAudioAggregateDeviceTapListKey as String: [
+            kAudioAggregateDeviceNameKey         as String: "Lezat System Audio Tap",
+            kAudioAggregateDeviceUIDKey          as String: aggregateUID,
+            kAudioAggregateDeviceMainSubDeviceKey as String: outUID,
+            kAudioAggregateDeviceIsPrivateKey    as String: true,
+            kAudioAggregateDeviceIsStackedKey    as String: false,
+            kAudioAggregateDeviceTapAutoStartKey as String: true,
+            kAudioAggregateDeviceSubDeviceListKey as String: [
+                [kAudioSubDeviceUIDKey as String: outUID]
+            ],
+            kAudioAggregateDeviceTapListKey      as String: [
                 [
-                    kAudioSubTapUIDKey as String: uid,
-                    kAudioSubTapDriftCompensationKey as String: 1,
-                ],
+                    kAudioSubTapDriftCompensationKey as String: true,
+                    // CRITICAL: description UUID, not kAudioTapPropertyUID.
+                    kAudioSubTapUIDKey as String: tapDesc.uuid.uuidString,
+                ]
             ],
         ]
 
-        NSLog("LezatSysAudio: step 14 — AudioHardwareCreateAggregateDevice")
         var createdAggID: AudioObjectID = 0
         let aggErr = AudioHardwareCreateAggregateDevice(
             aggDict as CFDictionary, &createdAggID
         )
         if aggErr != noErr {
             destroy()
-            throw makeErr("AudioHardwareCreateAggregateDevice failed: OSStatus=\(aggErr)")
+            throw makeErr(
+                "AudioHardwareCreateAggregateDevice failed: OSStatus=\(aggErr)"
+            )
         }
         if createdAggID == 0 {
             destroy()
             throw makeErr("AudioHardwareCreateAggregateDevice returned 0 aggID")
         }
         aggregateID = createdAggID
-        NSLog("LezatSysAudio: step 15 — aggregate id=\(aggregateID)")
+        logStep("step 10 — aggregate id=\(aggregateID) uid=\(aggregateUID)")
 
-        NSLog("LezatSysAudio: step 16 — query stream format")
-        var asbd = AudioStreamBasicDescription()
-        var asbdSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        var asbdAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamFormat,
-            mScope: kAudioDevicePropertyScopeInput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let formatErr = AudioObjectGetPropertyData(
-            aggregateID, &asbdAddr, 0, nil, &asbdSize, &asbd
-        )
-        let seededRate = (formatErr == noErr && asbd.mSampleRate > 0)
-            ? asbd.mSampleRate : 48_000
-        NSLog("LezatSysAudio: step 17 — rate=\(seededRate) Hz")
-        SampleSink.shared.push([], rate: seededRate)
-
-        NSLog("LezatSysAudio: step 18 — AudioDeviceCreateIOProcID")
-        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        // ---- Step 11: register the IOProc on a dedicated dispatch queue.
+        // Block + queue is more reliable on Tahoe than the legacy
+        // function-pointer + Unmanaged-ctx variant.
+        logStep("step 11 — AudioDeviceCreateIOProcIDWithBlock")
         var procID: AudioDeviceIOProcID?
-        let procErr = AudioDeviceCreateIOProcID(
-            aggregateID,
-            { (_, _, inputData, _, _, _, clientData) -> OSStatus in
-                guard let clientData else { return noErr }
-                let backend = Unmanaged<ProcessTapBackend>
-                    .fromOpaque(clientData).takeUnretainedValue()
-                backend.handleInput(inputData)
-                return noErr
-            },
-            ctx,
-            &procID
-        )
+        let procErr = AudioDeviceCreateIOProcIDWithBlock(
+            &procID, aggregateID, ioQueue
+        ) { [weak self] _, inputData, _, _, _ in
+            self?.handleInput(inputData)
+        }
         if procErr != noErr {
             destroy()
-            throw makeErr("AudioDeviceCreateIOProcID failed: OSStatus=\(procErr)")
+            throw makeErr(
+                "AudioDeviceCreateIOProcIDWithBlock failed: OSStatus=\(procErr)"
+            )
         }
         guard let realProcID = procID else {
             destroy()
             throw makeErr("IOProcID came back nil")
         }
         ioProcID = realProcID
-        NSLog("LezatSysAudio: step 19 — IOProc registered")
+        logStep("step 12 — IOProc registered")
 
-        NSLog("LezatSysAudio: step 20 — AudioDeviceStart")
+        // ---- Step 13: start the device
+        logStep("step 13 — AudioDeviceStart")
         let startErr = AudioDeviceStart(aggregateID, realProcID)
         if startErr != noErr {
             destroy()
             throw makeErr("AudioDeviceStart failed: OSStatus=\(startErr)")
         }
-        NSLog("LezatSysAudio: start completed — stream live")
+
+        // ---- Step 14: post-start sanity — query kAudioDevicePropertyDeviceIsRunning
+        var isRunning: UInt32 = 0
+        var runSize = UInt32(MemoryLayout<UInt32>.size)
+        var runAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunning,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let runErr = AudioObjectGetPropertyData(
+            aggregateID, &runAddr, 0, nil, &runSize, &isRunning
+        )
+        logStep(
+            "step 14 — DeviceIsRunning err=\(runErr) value=\(isRunning) — " +
+            "stream live, awaiting first IOProc callback"
+        )
+
+        // Schedule a callback-count probe at +2s so we know whether the IOProc
+        // ever fired even if the user stops the meeting before sample drain.
+        ioQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            logStep(
+                "step 15 — 2s probe: ioCallbacks=\(self.ioCallbackCount), " +
+                "emptyCallbacks=\(self.emptyCallbackCount)"
+            )
+        }
     }
 
     private func handleInput(_ bufferList: UnsafePointer<AudioBufferList>) {
+        ioCallbackCount += 1
+
         let abl = UnsafeMutableAudioBufferListPointer(
             UnsafeMutablePointer(mutating: bufferList)
         )
-        guard let first = abl.first else { return }
+        guard let first = abl.first else {
+            emptyCallbackCount += 1
+            return
+        }
         let byteCount = Int(first.mDataByteSize)
-        guard let rawData = first.mData, byteCount > 0 else { return }
+        guard let rawData = first.mData, byteCount > 0 else {
+            emptyCallbackCount += 1
+            return
+        }
         let floatCount = byteCount / MemoryLayout<Float>.size
         let floats = rawData.bindMemory(to: Float.self, capacity: floatCount)
+
+        if !firstCallbackLogged {
+            firstCallbackLogged = true
+            logStep(
+                "first IO callback — bufferCount=\(abl.count) " +
+                "byteCount=\(byteCount) floatCount=\(floatCount) " +
+                "rate=\(streamRate) ch=\(channels)"
+            )
+        }
+
+        // Mixdown to mono. Layout depends on flags:
+        //  - interleaved: [L R L R L R ...] in buffer 0
+        //  - non-interleaved: buffer 0 = L, buffer 1 = R, etc.
         var mono: [Float] = []
-        let channels = 2
-        if floatCount >= channels {
-            mono.reserveCapacity(floatCount / channels)
+        if nonInterleaved && abl.count >= channels && channels > 1 {
+            // Non-interleaved: average across the per-channel buffers.
+            let perChannelFloats = byteCount / MemoryLayout<Float>.size
+            mono.reserveCapacity(perChannelFloats)
+            // Bind every channel buffer up front.
+            var channelPtrs: [UnsafePointer<Float>] = []
+            channelPtrs.reserveCapacity(channels)
+            for c in 0..<channels {
+                guard let raw = abl[c].mData else { continue }
+                channelPtrs.append(
+                    raw.bindMemory(to: Float.self, capacity: perChannelFloats)
+                )
+            }
+            let activeChannels = channelPtrs.count
+            if activeChannels == 0 {
+                emptyCallbackCount += 1
+                return
+            }
+            for i in 0..<perChannelFloats {
+                var s: Float = 0
+                for c in 0..<activeChannels { s += channelPtrs[c][i] }
+                mono.append(s / Float(activeChannels))
+            }
+        } else if channels > 1 {
+            // Interleaved stereo+ — average the channels frame by frame.
+            let frames = floatCount / channels
+            mono.reserveCapacity(frames)
             var i = 0
             while i + channels - 1 < floatCount {
-                mono.append((floats[i] + floats[i + 1]) * 0.5)
+                var s: Float = 0
+                for c in 0..<channels { s += floats[i + c] }
+                mono.append(s / Float(channels))
                 i += channels
             }
         } else {
+            // Mono passthrough.
             mono.reserveCapacity(floatCount)
             for i in 0..<floatCount { mono.append(floats[i]) }
         }
-        SampleSink.shared.push(mono, rate: 48_000)
+        SampleSink.shared.push(mono, rate: streamRate)
     }
 
-    func stop() { destroy() }
+    func stop() {
+        logStep(
+            "stop — ioCallbacks=\(ioCallbackCount) emptyCallbacks=\(emptyCallbackCount)"
+        )
+        destroy()
+    }
 
     private func destroy() {
-        if let procID = ioProcID {
+        if let procID = ioProcID, aggregateID != 0 {
             _ = AudioDeviceStop(aggregateID, procID)
             _ = AudioDeviceDestroyIOProcID(aggregateID, procID)
             ioProcID = nil
@@ -301,7 +449,14 @@ private final class SystemAudioCapture: @unchecked Sendable {
     }
 }
 
-// MARK: - C entrypoints — synchronous, no DispatchQueue reliance
+// MARK: - C entrypoints
+
+@_cdecl("lezat_sysaudio_set_log_sink")
+public func lezat_sysaudio_set_log_sink(
+    _ cb: @convention(c) (UnsafePointer<CChar>) -> Void
+) {
+    logSink = cb
+}
 
 @_cdecl("lezat_sysaudio_supported")
 public func lezat_sysaudio_supported() -> Int32 {
@@ -312,12 +467,12 @@ public func lezat_sysaudio_supported() -> Int32 {
 @_cdecl("lezat_sysaudio_start")
 public func lezat_sysaudio_start() -> Int32 {
     guard #available(macOS 14.2, *) else { return -1 }
-    NSLog("LezatSysAudio: @_cdecl start() entry")
+    logStep("@_cdecl start() entry")
     do {
         try SystemAudioCapture.shared.start()
         return 0
     } catch {
-        NSLog("LezatSysAudio: start threw: \(error.localizedDescription)")
+        logStep("start threw: \(error.localizedDescription)")
         return -2
     }
 }

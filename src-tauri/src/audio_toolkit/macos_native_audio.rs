@@ -12,8 +12,9 @@
 
 #![cfg(target_os = "macos")]
 
+use std::ffi::{c_char, CStr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -25,6 +26,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const POLL_CHUNK_SAMPLES: usize = 4096;
 
 unsafe extern "C" {
+    fn lezat_sysaudio_set_log_sink(cb: extern "C" fn(*const c_char));
     fn lezat_sysaudio_supported() -> i32;
     fn lezat_sysaudio_start() -> i32;
     fn lezat_sysaudio_stop() -> i32;
@@ -32,7 +34,28 @@ unsafe extern "C" {
     fn lezat_sysaudio_sample_rate() -> i32;
 }
 
+/// Receives Swift NSLog-style step messages and routes them to handy.log.
+/// NSLog under hardened runtime is invisible in release builds, so without
+/// this we fly blind every time a Process Tap silently fails on Tahoe.
+extern "C" fn swift_log_sink(msg: *const c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let cs = unsafe { CStr::from_ptr(msg) };
+    let s = cs.to_string_lossy();
+    info!("swift sysaudio: {s}");
+}
+
+static LOG_SINK_REGISTERED: Once = Once::new();
+
+fn ensure_log_sink_registered() {
+    LOG_SINK_REGISTERED.call_once(|| unsafe {
+        lezat_sysaudio_set_log_sink(swift_log_sink);
+    });
+}
+
 pub fn native_system_audio_supported() -> bool {
+    ensure_log_sink_registered();
     unsafe { lezat_sysaudio_supported() != 0 }
 }
 
@@ -53,9 +76,10 @@ struct Inner {
 
 impl MacosNativeAudioRecorder {
     pub fn new() -> Result<Self> {
+        ensure_log_sink_registered();
         if !native_system_audio_supported() {
             return Err(anyhow!(
-                "Native system audio unsupported (macOS <13 or CLT-only build)"
+                "Native system audio unsupported (macOS <14.2 or CLT-only build)"
             ));
         }
         Ok(Self {
