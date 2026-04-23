@@ -149,6 +149,44 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
     }
 }
 
+/// Trigger the macOS "System Audio Recording" TCC prompt by briefly attempting
+/// a Process Tap. The OS adds the app to System Settings → Privacy → System
+/// Audio Recording on first attempt and pops the consent dialog. Falls back to
+/// opening the settings pane if the native bridge isn't available (older macOS,
+/// CLT-only build, or Tahoe still wedged).
+#[tauri::command]
+#[specta::specta]
+pub fn request_system_audio_permission() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::audio_toolkit::macos_native_audio::{
+            native_system_audio_supported, MacosNativeAudioRecorder,
+        };
+        if !native_system_audio_supported() {
+            return Err(
+                "Native system-audio bridge unavailable on this macOS build".to_string(),
+            );
+        }
+        let mut recorder = MacosNativeAudioRecorder::new()
+            .map_err(|e| format!("recorder init failed: {e}"))?;
+        // open() actually creates the Process Tap, which triggers the TCC
+        // prompt the first time and registers the app in the System Settings
+        // list either way. close() tears it back down — we don't need samples.
+        recorder
+            .open(None)
+            .map_err(|e| format!("Process Tap open failed: {e}"))?;
+        recorder
+            .close()
+            .map_err(|e| format!("Process Tap close failed: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("System Audio permission is macOS-only".to_string())
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn update_microphone_mode(app: AppHandle, always_on: bool) -> Result<(), String> {

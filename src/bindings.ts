@@ -653,6 +653,14 @@ async openMicrophonePrivacySettings() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async requestSystemAudioPermission() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_system_audio_permission") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAvailableMicrophones() : Promise<Result<AudioDevice[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_available_microphones") };
