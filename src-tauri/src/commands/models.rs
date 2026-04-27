@@ -1,4 +1,6 @@
-use crate::managers::model::{ModelInfo, ModelManager};
+use crate::managers::model::{recommended_default_model_id, ModelInfo, ModelManager};
+use serde::Serialize;
+use specta::Type;
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
 use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
 use std::sync::Arc;
@@ -10,6 +12,57 @@ pub async fn get_available_models(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<Vec<ModelInfo>, String> {
     Ok(model_manager.get_available_models())
+}
+
+#[derive(Serialize, Type)]
+pub struct RecommendedModel {
+    pub model_id: String,
+    pub model_name: String,
+    pub size_mb: u64,
+    pub reason: String,
+}
+
+/// Returns the model the app picked as the default for this user's hardware.
+/// Used by the UI to show a one-time "we picked X for you, here's why" banner
+/// after first model download. Stays stable across launches — the choice is
+/// derived from compile-time platform/arch checks plus the model catalog.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_recommended_model(
+    model_manager: State<'_, Arc<ModelManager>>,
+) -> Result<RecommendedModel, String> {
+    let id = recommended_default_model_id();
+    let info = model_manager
+        .get_model_info(id)
+        .ok_or_else(|| format!("Recommended model {id} missing from catalog"))?;
+    let reason = build_reason();
+    Ok(RecommendedModel {
+        model_id: info.id,
+        model_name: info.name,
+        size_mb: info.size_mb,
+        reason,
+    })
+}
+
+fn build_reason() -> String {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return "Apple Silicon detected — Metal accelerates Whisper Medium fast enough for live meetings. Multilingual including Spanish.".to_string();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return "Windows with Vulkan/DirectML acceleration available — Whisper Medium runs comfortably and supports Spanish.".to_string();
+    }
+    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+    {
+        return "Intel Mac — Whisper Small is the multilingual option that stays responsive on CPU.".to_string();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return "Linux — Whisper Small balances accuracy with CPU performance and supports Spanish.".to_string();
+    }
+    #[allow(unreachable_code)]
+    "Whisper Small is a safe multilingual default.".to_string()
 }
 
 #[tauri::command]

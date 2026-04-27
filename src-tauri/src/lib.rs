@@ -395,6 +395,7 @@ pub fn run(cli_args: CliArgs) {
             commands::initialize_shortcuts,
             commands::models::get_available_models,
             commands::models::get_model_info,
+            commands::models::get_recommended_model,
             commands::models::download_model,
             commands::models::delete_model,
             commands::models::cancel_download,

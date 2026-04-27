@@ -106,6 +106,18 @@ impl ModelManager {
 
         let mut available_models = HashMap::new();
 
+        // Recommend a default Whisper model based on the user's hardware. We
+        // assume Spanish until we ask the user — Whisper is multilingual; the
+        // English-only fast paths (Parakeet, Moonshine) would be wrong for our
+        // primary audience. Tier:
+        //   * Apple Silicon / Windows w/ GPU acceleration → Whisper Medium
+        //     (~469 MB, accuracy 0.75, runs comfortably on Metal/Vulkan).
+        //   * Older / CPU-only systems → Whisper Small (~465 MB, accuracy 0.60,
+        //     still multilingual, manageable on CPU).
+        // The user can switch to Turbo / Large from Settings → Models if they
+        // want better accuracy and have the bandwidth + compute.
+        let recommended_id: &str = recommended_default_model_id();
+
         // Whisper supported languages (99 languages from tokenizer)
         // Including zh-Hans and zh-Hant variants to match frontend language codes
         let whisper_languages: Vec<String> = vec![
@@ -613,6 +625,13 @@ impl ModelManager {
         // Auto-discover custom Whisper models (.bin files) in the models directory
         if let Err(e) = Self::discover_custom_whisper_models(&models_dir, &mut available_models) {
             warn!("Failed to discover custom models: {}", e);
+        }
+
+        // Flip the recommended flag on whichever model matched our hardware
+        // tier. Onboarding's "Recommended" section keys off this.
+        if let Some(m) = available_models.get_mut(recommended_id) {
+            m.is_recommended = true;
+            info!("Recommended model for this hardware: {}", recommended_id);
         }
 
         let manager = Self {
@@ -1470,6 +1489,36 @@ impl ModelManager {
         info!("Download cancellation initiated for: {}", model_id);
         Ok(())
     }
+}
+
+/// Pick the model id we should mark as `is_recommended` for first-launch
+/// users based on the hardware we're compiled for. Conservative: prefer
+/// Whisper (multilingual — Lezat is Spanish-first) over the English-leaning
+/// Parakeet/Moonshine paths. The user can always switch.
+///
+/// * Apple Silicon → Whisper Medium (Metal accelerates 469 MB just fine).
+/// * Windows → Whisper Medium (Vulkan / DirectML).
+/// * Older Intel Mac / Linux fallbacks → Whisper Small (~465 MB, multilingual,
+///   acceptable on CPU).
+pub fn recommended_default_model_id() -> &'static str {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return "medium";
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return "medium";
+    }
+    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+    {
+        return "small";
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return "small";
+    }
+    #[allow(unreachable_code)]
+    "small"
 }
 
 #[cfg(test)]

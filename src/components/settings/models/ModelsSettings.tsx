@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, Globe } from "lucide-react";
+import { ChevronDown, Globe, Sparkles, X } from "lucide-react";
 import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
-import type { ModelInfo } from "@/bindings";
+import { commands, type ModelInfo, type RecommendedModel } from "@/bindings";
+
+const REC_DISMISS_KEY = "lezat:recommendation-banner-dismissed";
 
 // check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
@@ -35,6 +37,35 @@ export const ModelsSettings: React.FC = () => {
     selectModel,
     deleteModel,
   } = useModelStore();
+
+  // Hardware-tier recommendation banner. Shown until the user dismisses
+  // it — they should know there are other choices and which one we picked
+  // for them. Persists dismissal in localStorage so it doesn't reappear.
+  const [recommended, setRecommended] = useState<RecommendedModel | null>(null);
+  const [recDismissed, setRecDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(REC_DISMISS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    if (recDismissed) return;
+    commands
+      .getRecommendedModel()
+      .then((r) => {
+        if (r.status === "ok") setRecommended(r.data);
+      })
+      .catch(() => undefined);
+  }, [recDismissed]);
+  const dismissRecommendation = () => {
+    try {
+      localStorage.setItem(REC_DISMISS_KEY, "1");
+    } catch {
+      /* private mode etc. */
+    }
+    setRecDismissed(true);
+  };
 
   // click outside handler for language dropdown
   useEffect(() => {
@@ -215,6 +246,36 @@ export const ModelsSettings: React.FC = () => {
           {t("settings.models.description")}
         </p>
       </div>
+
+      {/* Recommendation banner — explains which model we picked for this
+          machine and that other options exist. Dismissible per-user. */}
+      {!recDismissed && recommended && (
+        <div className="relative rounded-lg border border-lezat-sage/40 bg-lezat-sage/10 p-3 pr-9">
+          <div className="flex items-start gap-3">
+            <Sparkles className="w-4 h-4 text-lezat-sage shrink-0 mt-0.5" />
+            <div className="flex-1 text-sm leading-relaxed">
+              <span className="font-medium">
+                {recommended.model_name}
+              </span>{" "}
+              <span className="text-text/60">
+                ({recommended.size_mb} MB)
+              </span>{" "}
+              <span className="text-text/80">
+                is recommended for your hardware. {recommended.reason} You can
+                pick a different model below — bigger ones (Turbo, Large) get
+                you more accuracy at the cost of speed and disk space.
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={dismissRecommendation}
+            className="absolute top-2 right-2 p-1 text-text/50 hover:text-text rounded"
+            title="Dismiss"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       {filteredModels.length > 0 ? (
         <div className="space-y-6">
           {/* Downloaded Models Section — header always visible so filter stays accessible */}

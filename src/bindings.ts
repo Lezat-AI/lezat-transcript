@@ -554,6 +554,14 @@ async getModelInfo(modelId: string) : Promise<Result<ModelInfo | null, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+async getRecommendedModel() : Promise<Result<RecommendedModel, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_recommended_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async downloadModel(modelId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("download_model", { modelId }) };
@@ -989,6 +997,7 @@ export type MeetingRecord = { id: number; started_at: number; ended_at: number |
 export type MeetingStateEvent = { state: "started"; meeting_id: number; title: string } | { state: "stopped"; meeting_id: number } | { state: "error"; meeting_id: number | null; message: string }
 export type MeetingTranscriptChunkEvent = { meeting_id: number; chunk: MeetingChunk }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
+export type RecommendedModel = { model_id: string; model_name: string; size_mb: number; reason: string }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"

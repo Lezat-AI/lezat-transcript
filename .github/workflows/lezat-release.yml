@@ -25,7 +25,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Create the empty draft once, before the matrix fans out. Without this,
+  # softprops/action-gh-release running concurrently in three matrix jobs each
+  # found "no draft for this tag" simultaneously and each created its own,
+  # leaving us with N orphan drafts instead of one consolidated release. By
+  # gating the build matrix on this job we guarantee the draft exists before
+  # any uploader runs, so subsequent action-gh-release calls find + append.
+  prepare-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Create empty draft
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+
   build:
+    needs: prepare-release
+    # Run the matrix even on workflow_dispatch (no tag push, no draft job
+    # ran) — we still want to be able to verify a build off-cycle.
+    if: ${{ always() && (needs.prepare-release.result == 'success' || !startsWith(github.ref, 'refs/tags/v')) }}
     permissions:
       contents: write
     strategy:
