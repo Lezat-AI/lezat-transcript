@@ -1,41 +1,39 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { readFile } from "@tauri-apps/plugin-fs";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Search, Trash2, Download } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Search,
+  Trash2,
+  Download,
+  Star,
+  RotateCcw,
+  FolderOpen,
+  Check,
+  Copy,
+} from "lucide-react";
 import {
   commands,
+  events,
   type HistoryEntry,
+  type HistoryUpdatePayload,
   type MeetingChunk,
   type MeetingRecord,
 } from "@/bindings";
+import { useOsType } from "@/hooks/useOsType";
+import { AudioPlayer } from "../ui/AudioPlayer";
+import { Button } from "../ui/Button";
 import {
   MeetingTranscriptView,
   formatDialogAsText,
 } from "../meetings/MeetingTranscriptView";
 
-async function downloadMeetingAudio(
-  meetingId: number,
-  track: "mic" | "system",
-  suggestedName: string,
-): Promise<void> {
-  const dest = await save({
-    defaultPath: suggestedName,
-    filters: [{ name: "WAV audio", extensions: ["wav"] }],
-  });
-  if (!dest) return;
-  const res = await commands.exportMeetingAudio(meetingId, track, dest);
-  if (res.status === "error") {
-    console.warn("export_meeting_audio failed:", res.error);
-  }
-}
-
-/// Unified "Library" view — merges dictation transcripts and meeting recordings
-/// into one timeline so users can find anything they've captured without
-/// remembering which flow produced it.
-///
-/// Clicking an entry opens an inline read-only detail panel. Power-user actions
-/// (audio playback, retry transcription, star) still live in the dedicated
-/// History and Meetings tabs — Library is intentionally minimal.
+/// Unified "Library" view — the single canonical browser for everything the
+/// app captures: dictations and meeting recordings. All power-user actions
+/// (audio playback, retry transcription, star, download, dialog view) live
+/// here so users don't have to remember which tab to open.
 
 type LibraryKind = "dictation" | "meeting";
 
@@ -43,16 +41,21 @@ interface LibraryItem {
   kind: LibraryKind;
   id: number;
   title: string;
-  timestamp: number; // unix seconds
+  timestamp: number;
   duration_ms?: number;
   transcript: string;
-  /// For meetings only: path to the directory holding mic.wav / system.wav.
-  /// Lets the row offer a download shortcut without a follow-up fetch.
+  /// For meetings only: dir holding mic.wav / system.wav.
   audio_path?: string | null;
-  /// For meetings only: per-source timestamped chunks. Drives the dialog
-  /// view in the expanded detail. Empty for legacy meetings recorded
-  /// before chunked persistence.
+  /// For meetings only: per-source timestamped chunks. Drives dialog view.
   chunks?: MeetingChunk[];
+  /// For dictations only: file name in the recordings dir, used to look up
+  /// the audio blob lazily via the Rust side.
+  file_name?: string;
+  /// For dictations only: pinned/starred flag.
+  saved?: boolean;
+  /// For dictations only: original transcription text (post-process variant
+  /// is what `transcript` holds when present).
+  transcription_text?: string;
 }
 
 type Filter = "all" | "dictation" | "meeting";
@@ -64,6 +67,9 @@ function fromDictation(entry: HistoryEntry): LibraryItem {
     title: entry.title,
     timestamp: entry.timestamp,
     transcript: entry.post_processed_text || entry.transcription_text || "",
+    file_name: entry.file_name,
+    saved: entry.saved,
+    transcription_text: entry.transcription_text,
   };
 }
 
@@ -96,7 +102,24 @@ function formatWhen(ts: number): string {
   });
 }
 
+async function downloadMeetingAudio(
+  meetingId: number,
+  track: "mic" | "system",
+  suggestedName: string,
+): Promise<void> {
+  const dest = await save({
+    defaultPath: suggestedName,
+    filters: [{ name: "WAV audio", extensions: ["wav"] }],
+  });
+  if (!dest) return;
+  const res = await commands.exportMeetingAudio(meetingId, track, dest);
+  if (res.status === "error") {
+    console.warn("export_meeting_audio failed:", res.error);
+  }
+}
+
 export function LibraryPage() {
+  const osType = useOsType();
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -104,10 +127,11 @@ export function LibraryPage() {
   const [meetingViewMode, setMeetingViewMode] = useState<"dialog" | "plain">(
     "dialog",
   );
+  const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
-    // Pull both data sources in parallel. listMeetings is cheap; dictation
-    // history is paged but we just grab the first 500 for v1.
     const [histRes, meetingsRes] = await Promise.all([
       commands.getHistoryEntries(null, 500).catch(() => ({
         status: "error" as const,
@@ -125,7 +149,7 @@ export function LibraryPage() {
       meetingsRes.status === "ok" ? meetingsRes.data.map(fromMeeting) : [];
 
     const merged = [...dictations, ...meetings].sort(
-      (a, b) => b.timestamp - a.timestamp
+      (a, b) => b.timestamp - a.timestamp,
     );
     setItems(merged);
   }, []);
@@ -134,14 +158,21 @@ export function LibraryPage() {
     refresh();
   }, [refresh]);
 
-  // Live-update when either underlying store emits a mutation event.
+  // Live updates from both stores.
   useEffect(() => {
     const unsubs = [
-      listen("history-update-payload", () => refresh()),
+      events.historyUpdatePayload.listen((evt) => {
+        const p: HistoryUpdatePayload = evt.payload;
+        if (p.action === "added" || p.action === "updated") {
+          // Cheap: refetch. Could be optimised but the surface is small.
+          refresh();
+        }
+      }),
       listen("meeting-state-event", () => refresh()),
+      listen("meeting-transcript-chunk-event", () => refresh()),
     ];
     return () => {
-      unsubs.forEach((p) => p.then((fn) => fn()).catch(() => undefined));
+      unsubs.forEach((p) => p.then((fn: () => void) => fn()).catch(() => undefined));
     };
   }, [refresh]);
 
@@ -176,17 +207,105 @@ export function LibraryPage() {
     refresh();
   };
 
-  const copyTranscript = (text: string) => {
+  const handleCopy = (item: LibraryItem) => {
+    let text = item.transcript;
+    if (
+      item.kind === "meeting" &&
+      meetingViewMode === "dialog" &&
+      (item.chunks?.length ?? 0) > 0
+    ) {
+      text = formatDialogAsText(item.chunks!);
+    }
     navigator.clipboard?.writeText(text).catch(() => undefined);
+    setCopiedId(item.id);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const handleToggleSaved = async (item: LibraryItem) => {
+    if (item.kind !== "dictation") return;
+    // Optimistic flip.
+    setItems((prev) =>
+      prev.map((it) =>
+        it.kind === "dictation" && it.id === item.id
+          ? { ...it, saved: !it.saved }
+          : it,
+      ),
+    );
+    if (selected?.kind === "dictation" && selected.id === item.id) {
+      setSelected({ ...selected, saved: !selected.saved });
+    }
+    const res = await commands.toggleHistoryEntrySaved(item.id);
+    if (res.status !== "ok") refresh(); // revert on failure via refetch
+  };
+
+  const handleRetry = async (item: LibraryItem) => {
+    if (item.kind !== "dictation") return;
+    setRetryingIds((prev) => new Set(prev).add(item.id));
+    try {
+      const res = await commands.retryHistoryEntryTranscription(item.id);
+      if (res.status !== "ok") toast.error("Retry failed");
+    } finally {
+      setRetryingIds((prev) => {
+        const n = new Set(prev);
+        n.delete(item.id);
+        return n;
+      });
+      refresh();
+    }
+  };
+
+  // Lazy audio loader for dictation entries — Rust resolves the absolute
+  // path (audio lives in app data outside the fs scope), we wrap it for
+  // the WebView. Linux can't use convertFileSrc reliably, fall back to a
+  // blob URL.
+  const getDictationAudioUrl = useCallback(
+    async (fileName: string): Promise<string | null> => {
+      try {
+        const res = await commands.getAudioFilePath(fileName);
+        if (res.status !== "ok") return null;
+        if (osType === "linux") {
+          const data = await readFile(res.data);
+          const blob = new Blob([data], { type: "audio/wav" });
+          return URL.createObjectURL(blob);
+        }
+        return convertFileSrc(res.data, "asset");
+      } catch (err) {
+        console.warn("getDictationAudioUrl failed", err);
+        return null;
+      }
+    },
+    [osType],
+  );
+
+  const openRecordingsFolder = async () => {
+    try {
+      const res = await commands.openRecordingsFolder();
+      if (res.status !== "ok") console.warn(res.error);
+    } catch (err) {
+      console.warn("openRecordingsFolder failed", err);
+    }
   };
 
   return (
     <div className="w-full max-w-4xl flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h2 className="text-lg font-bold">Library</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold">Library</h2>
+          <Button
+            onClick={openRecordingsFolder}
+            variant="secondary"
+            size="sm"
+            className="flex items-center gap-2"
+            title="Open the folder where dictation audio is stored"
+          >
+            <FolderOpen className="w-4 h-4" />
+            <span>Open recordings folder</span>
+          </Button>
+        </div>
         <p className="text-sm text-mid-gray">
-          Everything you've captured — dictations and meeting recordings — in
-          one searchable timeline.
+          Everything you've captured — dictations and meetings — in one place.
+          Audio playback, retries, downloads, all here.
         </p>
       </header>
 
@@ -225,7 +344,6 @@ export function LibraryPage() {
         </div>
       </div>
 
-      {/* Entry list */}
       {visible.length === 0 ? (
         <div className="text-sm text-mid-gray italic py-8 text-center">
           {query
@@ -241,6 +359,8 @@ export function LibraryPage() {
           {visible.map((item) => {
             const isOpen =
               selected?.id === item.id && selected?.kind === item.kind;
+            const isDictation = item.kind === "dictation";
+            const isRetrying = retryingIds.has(item.id);
             return (
               <li key={`${item.kind}-${item.id}`}>
                 <div
@@ -252,7 +372,13 @@ export function LibraryPage() {
                 >
                   <TypeChip kind={item.kind} />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">
+                    <div className="text-sm font-medium truncate flex items-center gap-1.5">
+                      {isDictation && item.saved && (
+                        <Star
+                          className="w-3 h-3 text-logo-primary shrink-0"
+                          fill="currentColor"
+                        />
+                      )}
                       {item.title}
                     </div>
                     <div className="text-xs text-mid-gray truncate">
@@ -276,7 +402,7 @@ export function LibraryPage() {
                             `${item.title} — mic.wav`,
                           );
                         } catch (err) {
-                          console.warn("library card download failed", err);
+                          console.warn("card download failed", err);
                         }
                       }}
                       className="ml-1 p-1 text-mid-gray hover:text-text shrink-0"
@@ -298,7 +424,9 @@ export function LibraryPage() {
                 </div>
 
                 {isOpen && (
-                  <div className="px-4 pb-4 pt-1 bg-mid-gray/5 flex flex-col gap-2">
+                  <div className="px-4 pb-4 pt-2 bg-mid-gray/5 flex flex-col gap-3">
+                    {/* Transcript area: meetings get the dialog/plain
+                        toggle, dictations get plain text. */}
                     {item.kind === "meeting" ? (
                       <MeetingTranscriptView
                         chunks={item.chunks ?? []}
@@ -308,80 +436,122 @@ export function LibraryPage() {
                       />
                     ) : (
                       <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
-                        {item.transcript || (
+                        {isRetrying ? (
+                          <span className="italic text-mid-gray">
+                            Re-transcribing…
+                          </span>
+                        ) : item.transcript ? (
+                          item.transcript
+                        ) : (
                           <span className="italic text-mid-gray">
                             (no transcript)
                           </span>
                         )}
                       </div>
                     )}
+
+                    {/* Audio. Dictation uses a single lazy player keyed
+                        off file_name. Meeting shows two players (mic +
+                        system) when audio_path exists. */}
+                    {isDictation && item.file_name && (
+                      <AudioPlayer
+                        onLoadRequest={() =>
+                          getDictationAudioUrl(item.file_name!)
+                        }
+                        className="w-full"
+                      />
+                    )}
+                    {item.kind === "meeting" && item.audio_path && (
+                      <div className="flex flex-col gap-2 pt-1 border-t border-mid-gray/15">
+                        <h4 className="text-xs font-bold uppercase tracking-wide text-mid-gray">
+                          Audio
+                        </h4>
+                        {[
+                          { label: "Microphone (YOU)", track: "mic" as const, file: "mic.wav" },
+                          { label: "System audio (THEM)", track: "system" as const, file: "system.wav" },
+                        ].map((s) => {
+                          const join = (a: string, b: string) =>
+                            a.endsWith("/") ? a + b : a + "/" + b;
+                          const url = convertFileSrc(
+                            join(item.audio_path!, s.file),
+                          );
+                          return (
+                            <div key={s.label} className="flex items-center gap-3">
+                              <span className="text-xs text-mid-gray w-40 shrink-0">
+                                {s.label}
+                              </span>
+                              <AudioPlayer src={url} className="flex-1" />
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await downloadMeetingAudio(
+                                      item.id,
+                                      s.track,
+                                      `${item.title} — ${s.file}`,
+                                    );
+                                  } catch (err) {
+                                    console.warn("download failed", err);
+                                  }
+                                }}
+                                className="p-1.5 text-mid-gray hover:text-text rounded"
+                                title={`Download ${s.file}`}
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Action row */}
                     <div className="flex gap-2 flex-wrap">
                       <button
-                        onClick={() => {
-                          // Match Meetings tab: dialog mode → timestamped
-                          // "[00:12] YOU: …" format; plain → raw transcript.
-                          if (
-                            item.kind === "meeting" &&
-                            meetingViewMode === "dialog" &&
-                            (item.chunks?.length ?? 0) > 0
-                          ) {
-                            copyTranscript(formatDialogAsText(item.chunks!));
-                          } else {
-                            copyTranscript(item.transcript);
-                          }
-                        }}
+                        onClick={() => handleCopy(item)}
                         disabled={!item.transcript}
-                        className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40"
+                        className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40 inline-flex items-center gap-1"
                       >
+                        {copiedId === item.id ? (
+                          <Check className="w-3 h-3" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
                         {item.kind === "meeting" &&
                         meetingViewMode === "dialog" &&
                         (item.chunks?.length ?? 0) > 0
                           ? "Copy dialog"
                           : "Copy transcript"}
                       </button>
-                      {item.kind === "meeting" && item.audio_path && (
+
+                      {isDictation && (
                         <>
                           <button
-                            onClick={async () => {
-                              try {
-                                await downloadMeetingAudio(
-                                  item.id,
-                                  "mic",
-                                  `${item.title} — mic.wav`,
-                                );
-                              } catch (err) {
-                                console.warn("download mic failed", err);
-                              }
-                            }}
-                            className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 inline-flex items-center gap-1"
+                            onClick={() => handleToggleSaved(item)}
+                            className={
+                              "text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 inline-flex items-center gap-1 " +
+                              (item.saved ? "text-logo-primary" : "")
+                            }
                           >
-                            <Download className="w-3 h-3" />
-                            Mic audio
+                            <Star
+                              className="w-3 h-3"
+                              fill={item.saved ? "currentColor" : "none"}
+                            />
+                            {item.saved ? "Saved" : "Save"}
                           </button>
                           <button
-                            onClick={async () => {
-                              try {
-                                await downloadMeetingAudio(
-                                  item.id,
-                                  "system",
-                                  `${item.title} — system.wav`,
-                                );
-                              } catch (err) {
-                                console.warn("download system failed", err);
-                              }
-                            }}
-                            className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 inline-flex items-center gap-1"
+                            onClick={() => handleRetry(item)}
+                            disabled={isRetrying}
+                            className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40 inline-flex items-center gap-1"
                           >
-                            <Download className="w-3 h-3" />
-                            System audio
+                            <RotateCcw
+                              className={
+                                "w-3 h-3 " + (isRetrying ? "animate-spin" : "")
+                              }
+                            />
+                            {isRetrying ? "Retrying…" : "Retry transcription"}
                           </button>
                         </>
                       )}
-                      <span className="text-xs text-mid-gray self-center italic">
-                        {item.kind === "dictation"
-                          ? "Power actions (retry, star) live in the History tab"
-                          : "Open the Meetings tab for the full timeline"}
-                      </span>
                     </div>
                   </div>
                 )}

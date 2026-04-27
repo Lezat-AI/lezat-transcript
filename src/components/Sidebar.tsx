@@ -2,14 +2,13 @@ import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
-import { Cog, FlaskConical, Heart, History, Info, Library, Sparkles, Cpu, Video } from "lucide-react";
+import { Cog, FlaskConical, Heart, Info, Library, Sparkles, Cpu, Video } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
 import {
   GeneralSettings,
   AdvancedSettings,
-  HistorySettings,
   DebugSettings,
   AboutSettings,
   PostProcessingSettings,
@@ -67,12 +66,9 @@ export const SECTIONS_CONFIG = {
     component: AdvancedSettings,
     enabled: () => true,
   },
-  history: {
-    labelKey: "sidebar.history",
-    icon: History,
-    component: HistorySettings,
-    enabled: () => true,
-  },
+  // history: dropped — Library tab is the canonical browse view for both
+  // dictations and meetings (audio playback, retry transcription, star,
+  // and download all live there now).
   postprocessing: {
     labelKey: "sidebar.postProcessing",
     icon: Sparkles,
