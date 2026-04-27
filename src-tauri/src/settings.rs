@@ -1,4 +1,4 @@
-use log::{debug, warn};
+use log::{debug, info, warn};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
@@ -359,15 +359,19 @@ pub struct AppSettings {
     pub clamshell_microphone: Option<String>,
     /// Meeting Mode: also capture system audio (the other side of a call).
     /// Implementation is platform-specific:
-    ///  - macOS : requires BlackHole 2ch installed + used as an extra input
+    ///  - macOS : CoreAudio Process Tap (zero install, macOS 14.2+)
     ///  - Windows : WASAPI loopback (zero install)
     ///  - Linux  : default PulseAudio/PipeWire monitor source
-    #[serde(default)]
+    /// Defaults on so the feature works out-of-the-box — Windows team
+    /// members were getting empty meetings because the toggle was hidden
+    /// behind a settings panel they hadn't found.
+    #[serde(default = "default_capture_system_audio")]
     pub capture_system_audio: bool,
     /// Meeting Mode: persist the raw audio alongside the transcript so users
-    /// can replay or re-transcribe with a different model later. Off by
-    /// default because a 45-min meeting at 16 kHz mono is ~80 MB per source.
-    #[serde(default)]
+    /// can replay or re-transcribe with a different model later. ~80 MB for
+    /// a 45-minute single-source meeting at 16 kHz mono — small enough to
+    /// default on so users always have the option of going back to the audio.
+    #[serde(default = "default_save_meeting_audio")]
     pub save_meeting_audio: bool,
     /// Free-form prompt passed to Whisper as its `initial_prompt`. Useful to
     /// bias transcription toward a language and domain — e.g.
@@ -474,6 +478,14 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_update_checks_enabled() -> bool {
+    true
+}
+
+fn default_capture_system_audio() -> bool {
+    true
+}
+
+fn default_save_meeting_audio() -> bool {
     true
 }
 
@@ -796,8 +808,8 @@ pub fn get_default_settings() -> AppSettings {
         update_checks_enabled: default_update_checks_enabled(),
         selected_model: "".to_string(),
         always_on_microphone: false,
-        capture_system_audio: false,
-        save_meeting_audio: false,
+        capture_system_audio: default_capture_system_audio(),
+        save_meeting_audio: default_save_meeting_audio(),
         transcription_initial_prompt: None,
         selected_microphone: None,
         clamshell_microphone: None,
@@ -910,6 +922,33 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
 
     if ensure_post_process_defaults(&mut settings) {
         store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
+
+    // One-time meeting-audio default flip. The original defaults for both
+    // capture_system_audio and save_meeting_audio were false, which left
+    // Windows team members opening Meeting Mode and getting empty meetings
+    // because the toggle was hidden behind a settings panel they hadn't
+    // found. New installs get true via the new defaults; existing installs
+    // get migrated here once. Anyone who explicitly turns either off after
+    // this migration keeps their choice — the migration only runs once.
+    let migration_key = "__migrations_meeting_audio_defaults_v1";
+    if store.get(migration_key).is_none() {
+        let mut changed = false;
+        if !settings.capture_system_audio {
+            settings.capture_system_audio = true;
+            changed = true;
+        }
+        if !settings.save_meeting_audio {
+            settings.save_meeting_audio = true;
+            changed = true;
+        }
+        if changed {
+            store.set("settings", serde_json::to_value(&settings).unwrap());
+            info!(
+                "Settings migration: enabled capture_system_audio + save_meeting_audio by default"
+            );
+        }
+        store.set(migration_key, serde_json::Value::Bool(true));
     }
 
     settings
