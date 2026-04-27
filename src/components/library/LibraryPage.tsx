@@ -5,8 +5,13 @@ import { Search, Trash2, Download } from "lucide-react";
 import {
   commands,
   type HistoryEntry,
+  type MeetingChunk,
   type MeetingRecord,
 } from "@/bindings";
+import {
+  MeetingTranscriptView,
+  formatDialogAsText,
+} from "../meetings/MeetingTranscriptView";
 
 async function downloadMeetingAudio(
   meetingId: number,
@@ -44,6 +49,10 @@ interface LibraryItem {
   /// For meetings only: path to the directory holding mic.wav / system.wav.
   /// Lets the row offer a download shortcut without a follow-up fetch.
   audio_path?: string | null;
+  /// For meetings only: per-source timestamped chunks. Drives the dialog
+  /// view in the expanded detail. Empty for legacy meetings recorded
+  /// before chunked persistence.
+  chunks?: MeetingChunk[];
 }
 
 type Filter = "all" | "dictation" | "meeting";
@@ -67,6 +76,7 @@ function fromMeeting(rec: MeetingRecord): LibraryItem {
     duration_ms: rec.duration_ms,
     transcript: rec.transcript_text || "",
     audio_path: rec.audio_path,
+    chunks: rec.chunks ?? [],
   };
 }
 
@@ -91,6 +101,9 @@ export function LibraryPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<LibraryItem | null>(null);
+  const [meetingViewMode, setMeetingViewMode] = useState<"dialog" | "plain">(
+    "dialog",
+  );
 
   const refresh = useCallback(async () => {
     // Pull both data sources in parallel. listMeetings is cheap; dictation
@@ -286,20 +299,45 @@ export function LibraryPage() {
 
                 {isOpen && (
                   <div className="px-4 pb-4 pt-1 bg-mid-gray/5 flex flex-col gap-2">
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
-                      {item.transcript || (
-                        <span className="italic text-mid-gray">
-                          (no transcript)
-                        </span>
-                      )}
-                    </div>
+                    {item.kind === "meeting" ? (
+                      <MeetingTranscriptView
+                        chunks={item.chunks ?? []}
+                        transcriptText={item.transcript}
+                        mode={meetingViewMode}
+                        onModeChange={setMeetingViewMode}
+                      />
+                    ) : (
+                      <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
+                        {item.transcript || (
+                          <span className="italic text-mid-gray">
+                            (no transcript)
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div className="flex gap-2 flex-wrap">
                       <button
-                        onClick={() => copyTranscript(item.transcript)}
+                        onClick={() => {
+                          // Match Meetings tab: dialog mode → timestamped
+                          // "[00:12] YOU: …" format; plain → raw transcript.
+                          if (
+                            item.kind === "meeting" &&
+                            meetingViewMode === "dialog" &&
+                            (item.chunks?.length ?? 0) > 0
+                          ) {
+                            copyTranscript(formatDialogAsText(item.chunks!));
+                          } else {
+                            copyTranscript(item.transcript);
+                          }
+                        }}
                         disabled={!item.transcript}
                         className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40"
                       >
-                        Copy transcript
+                        {item.kind === "meeting" &&
+                        meetingViewMode === "dialog" &&
+                        (item.chunks?.length ?? 0) > 0
+                          ? "Copy dialog"
+                          : "Copy transcript"}
                       </button>
                       {item.kind === "meeting" && item.audio_path && (
                         <>

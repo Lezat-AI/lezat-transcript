@@ -8,6 +8,10 @@ import { commands } from "@/bindings";
 import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
 import { AudioPlayer } from "../ui/AudioPlayer";
+import {
+  MeetingTranscriptView,
+  formatDialogAsText,
+} from "./MeetingTranscriptView";
 
 /// Save-as dialog → backend copy. The backend command bypasses fs-scope
 /// constraints since the user-chosen destination can be anywhere on disk;
@@ -42,37 +46,6 @@ function meetingAudioSources(audioPath: string | null): { label: string; url: st
 const EVT_CHUNK = "meeting-transcript-chunk-event";
 const EVT_STATE = "meeting-state-event";
 
-/// A "turn" in the dialog view: consecutive chunks from the same source
-/// merged into a single bubble. Two consecutive mic chunks 4 seconds apart
-/// read more naturally as one block than two — matches how chat UIs render
-/// rapid-fire messages from the same speaker.
-type DialogTurn = {
-  source: "mic" | "system";
-  startMs: number;
-  text: string;
-};
-
-function buildDialogTurns(chunks: MeetingChunk[]): DialogTurn[] {
-  const sorted = [...chunks].sort((a, b) => a.offset_ms - b.offset_ms);
-  const out: DialogTurn[] = [];
-  for (const c of sorted) {
-    const src: "mic" | "system" = c.source === "system" ? "system" : "mic";
-    const last = out[out.length - 1];
-    if (last && last.source === src) {
-      last.text = `${last.text} ${c.text}`.replace(/\s+/g, " ").trim();
-    } else {
-      out.push({ source: src, startMs: c.offset_ms, text: c.text.trim() });
-    }
-  }
-  return out;
-}
-
-function formatOffset(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
-}
 
 type StatePayload =
   | { state: "started"; meeting_id: number; title: string }
@@ -520,64 +493,12 @@ export function MeetingsPage() {
             </button>
           </div>
 
-          {/* Plain ↔ Dialog toggle. Dialog hides when there are no chunks
-              — old meetings recorded before chunked persistence only have
-              concatenated transcript_text. */}
-          {viewing.chunks.length > 0 && (
-            <div className="flex items-center gap-1 self-start p-1 rounded-md border border-mid-gray/20 text-xs">
-              {(["dialog", "plain"] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setViewMode(m)}
-                  className={
-                    "px-2.5 py-0.5 rounded transition-colors " +
-                    (viewMode === m
-                      ? "bg-lezat-sage text-[#0d0d1a] font-medium"
-                      : "hover:bg-mid-gray/10 text-mid-gray")
-                  }
-                >
-                  {m === "dialog" ? "Dialog" : "Plain"}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {viewing.chunks.length > 0 && viewMode === "dialog" ? (
-            <div className="flex flex-col gap-2 max-h-96 overflow-y-auto pr-1">
-              {buildDialogTurns(viewing.chunks).map((turn, idx) => {
-                const isYou = turn.source === "mic";
-                return (
-                  <div
-                    key={idx}
-                    className={
-                      "flex flex-col max-w-[80%] " +
-                      (isYou ? "self-end items-end" : "self-start items-start")
-                    }
-                  >
-                    <div
-                      className={
-                        "rounded-2xl px-3 py-1.5 text-sm leading-relaxed whitespace-pre-wrap " +
-                        (isYou
-                          ? "bg-lezat-sage/25 text-text rounded-br-sm"
-                          : "bg-mid-gray/15 text-text rounded-bl-sm")
-                      }
-                    >
-                      {turn.text}
-                    </div>
-                    <div className="text-[10px] text-mid-gray mt-0.5 px-1">
-                      {isYou ? "YOU" : "THEM"} · {formatOffset(turn.startMs)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
-              {viewing.transcript_text || (
-                <span className="italic text-mid-gray">(no transcript)</span>
-              )}
-            </div>
-          )}
+          <MeetingTranscriptView
+            chunks={viewing.chunks}
+            transcriptText={viewing.transcript_text}
+            mode={viewMode}
+            onModeChange={setViewMode}
+          />
 
           {viewing.audio_path && (
             <div className="flex flex-col gap-2 pt-2 border-t border-mid-gray/15">
@@ -623,17 +544,10 @@ export function MeetingsPage() {
                 // Copy in whichever shape the user is currently looking at.
                 // Dialog mode: "[00:12] YOU: ...\n[00:18] THEM: ..." which
                 // pastes nicely into notes / Slack / Notion.
-                let text = viewing.transcript_text;
-                if (viewMode === "dialog" && viewing.chunks.length > 0) {
-                  text = buildDialogTurns(viewing.chunks)
-                    .map(
-                      (t) =>
-                        `[${formatOffset(t.startMs)}] ${
-                          t.source === "mic" ? "YOU" : "THEM"
-                        }: ${t.text}`,
-                    )
-                    .join("\n");
-                }
+                const text =
+                  viewMode === "dialog" && viewing.chunks.length > 0
+                    ? formatDialogAsText(viewing.chunks)
+                    : viewing.transcript_text;
                 navigator.clipboard?.writeText(text);
               }}
               className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10"
