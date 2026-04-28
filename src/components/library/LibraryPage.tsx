@@ -297,10 +297,10 @@ export function LibraryPage() {
             variant="secondary"
             size="sm"
             className="flex items-center gap-2"
-            title="Open the folder where dictation audio is stored"
+            title="Open the folder containing both recordings/ (dictations) and meetings/ (meeting audio)"
           >
             <FolderOpen className="w-4 h-4" />
-            <span>Open recordings folder</span>
+            <span>Open audio folder</span>
           </Button>
         </div>
         <p className="text-sm text-mid-gray">

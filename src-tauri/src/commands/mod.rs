@@ -72,15 +72,23 @@ pub fn set_log_level(app: AppHandle, level: LogLevel) -> Result<(), String> {
 #[specta::specta]
 #[tauri::command]
 pub fn open_recordings_folder(app: AppHandle) -> Result<(), String> {
+    // Open the app's data root, NOT recordings/. recordings/ holds only
+    // dictation audio; meeting audio lives in meetings/<id>/. Users
+    // clicking "Open audio folder" looking for a meeting recording were
+    // landing in an empty recordings/ and assuming nothing got saved.
+    // Opening the parent shows both subdirs side by side.
     let app_data_dir = crate::portable::app_data_dir(&app)
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
 
-    let recordings_dir = app_data_dir.join("recordings");
+    // Make sure both subdirs exist so the user always sees them, even on
+    // a fresh install where neither flow has fired yet.
+    let _ = std::fs::create_dir_all(app_data_dir.join("recordings"));
+    let _ = std::fs::create_dir_all(app_data_dir.join("meetings"));
 
-    let path = recordings_dir.to_string_lossy().as_ref().to_string();
+    let path = app_data_dir.to_string_lossy().as_ref().to_string();
     app.opener()
         .open_path(path, None::<String>)
-        .map_err(|e| format!("Failed to open recordings folder: {}", e))?;
+        .map_err(|e| format!("Failed to open audio folder: {}", e))?;
 
     Ok(())
 }
