@@ -534,12 +534,19 @@ pub fn poll_integration_connected(
 
 /// Start an OAuth flow for a given provider. Returns the URL to open in the
 /// system browser.
-pub fn start_oauth_flow(settings: &AppSettings, provider: &str) -> Result<OAuthConnectResponse> {
-    let url = format!(
+pub fn start_oauth_flow(
+    settings: &AppSettings,
+    provider: &str,
+    desktop_redirect: Option<&str>,
+) -> Result<OAuthConnectResponse> {
+    let mut url = format!(
         "{}/api/desktop/integrations/{}/connect",
         base_url(settings)?,
         provider
     );
+    if let Some(redirect) = desktop_redirect {
+        url = format!("{}?desktop_redirect={}", url, urlencoding::encode(redirect));
+    }
     let key = api_key(settings)?;
     let client = build_client()?;
 
@@ -559,6 +566,75 @@ pub fn start_oauth_flow(settings: &AppSettings, provider: &str) -> Result<OAuthC
 
     resp.json::<OAuthConnectResponse>()
         .map_err(|e| anyhow!("Failed to parse OAuth response: {e}"))
+}
+
+/// Prepare a local TCP listener for integration OAuth callback (same pattern as Google OAuth).
+/// Returns (oauth_url, listener).
+pub fn integration_oauth_prepare(
+    settings: &AppSettings,
+    provider: &str,
+) -> Result<(OAuthConnectResponse, TcpListener)> {
+    let listener =
+        TcpListener::bind("127.0.0.1:0").map_err(|e| anyhow!("Failed to bind listener: {e}"))?;
+    let port = listener.local_addr()?.port();
+    let callback_url = format!("http://localhost:{port}/callback");
+
+    let resp = start_oauth_flow(settings, provider, Some(&callback_url))?;
+
+    Ok((resp, listener))
+}
+
+/// Wait on the TCP listener for the integration OAuth redirect (max 2 minutes).
+/// Serves a "Connected!" HTML page when the callback arrives.
+pub fn integration_oauth_wait(listener: &TcpListener) -> Result<()> {
+    listener.set_nonblocking(true).ok();
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+
+    let stream = loop {
+        if std::time::Instant::now() > deadline {
+            return Err(anyhow!("OAuth timed out. Please try again."));
+        }
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+            Err(e) => return Err(anyhow!("Failed to accept connection: {e}")),
+        }
+    };
+
+    stream.set_nonblocking(false).ok();
+    serve_integration_success_html(stream)
+}
+
+/// Serve a simple "Connected!" HTML page for integration OAuth callbacks.
+fn serve_integration_success_html(mut stream: std::net::TcpStream) -> Result<()> {
+    let mut buf = [0u8; 4096];
+    let _ = stream.read(&mut buf);
+
+    let html = r#"<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Lezat Transcript</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; display: flex;
+         align-items: center; justify-content: center; min-height: 100vh;
+         margin: 0; background: #0d0d1a; color: #f5f5f5; }
+  .card { text-align: center; padding: 2rem; }
+  .success { color: #b8d4a3; }
+</style></head>
+<body><div class="card">
+  <p class="success" style="font-size:1.5rem">&#10003;</p>
+  <p class="success">Connected! You can close this tab.</p>
+</div></body></html>"#;
+
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        html.len(),
+        html
+    );
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+    Ok(())
 }
 
 /// Disconnect an integration.

@@ -84,7 +84,7 @@ export const IntegrationsPage: React.FC = () => {
   // Auto-refresh when OAuth completes in the browser
   useEffect(() => {
     const p = listen<{ state: string; provider?: string }>(
-      "integration-oauth-event",
+      "integration-o-auth-event",
       (evt) => {
         if (evt.payload.state === "success") {
           fetchStatus();

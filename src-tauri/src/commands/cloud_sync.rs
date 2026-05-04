@@ -131,40 +131,51 @@ pub fn cloud_start_integration_oauth(
 ) -> Result<cloud_sync::OAuthConnectResponse, String> {
     let s = settings::get_settings(&app);
 
-    // Check if already connected — skip polling if so
-    let already_connected = cloud_sync::fetch_integrations_status(&s)
-        .map(|r| {
-            r.integrations
-                .iter()
-                .any(|i| i.provider == provider && i.connected)
-        })
-        .unwrap_or(false);
-
-    let resp = cloud_sync::start_oauth_flow(&s, &provider).map_err(|e| e.to_string())?;
+    // Prepare a local TCP listener so the backend can redirect back to the desktop
+    // after the OAuth flow completes (same pattern as Google OAuth).
+    let (resp, listener) =
+        cloud_sync::integration_oauth_prepare(&s, &provider).map_err(|e| e.to_string())?;
 
     // Open the OAuth URL in the system browser
     if let Err(e) = app.opener().open_url(&resp.oauth_url, None::<String>) {
         log::warn!("Failed to open OAuth URL in browser: {e}");
     }
 
-    // Poll in background for OAuth completion (skip if already connected)
-    if !already_connected {
-        let poll_provider = provider.clone();
-        std::thread::spawn(move || {
-            let s = settings::get_settings(&app);
-            match cloud_sync::poll_integration_connected(
-                &s,
-                &poll_provider,
-                std::time::Duration::from_secs(3),
-                std::time::Duration::from_secs(120),
-            ) {
-                Ok(()) => {
+    // Wait for OAuth redirect on the local listener + poll backend as fallback
+    let poll_provider = provider.clone();
+    std::thread::spawn(move || {
+        let s = settings::get_settings(&app);
+
+        // Wait for the browser redirect to our local listener (shows "Connected!" page)
+        let listener_ok = cloud_sync::integration_oauth_wait(&listener).is_ok();
+
+        // Also poll the backend to confirm the integration is actually connected
+        match cloud_sync::poll_integration_connected(
+            &s,
+            &poll_provider,
+            std::time::Duration::from_secs(2),
+            // If we already got the redirect, give the backend just a short window
+            if listener_ok {
+                std::time::Duration::from_secs(15)
+            } else {
+                std::time::Duration::from_secs(120)
+            },
+        ) {
+            Ok(()) => {
+                let _ = (cloud_sync::IntegrationOAuthEvent::Success {
+                    provider: poll_provider,
+                })
+                .emit(&app);
+            }
+            Err(e) => {
+                // If the listener got the redirect, still consider it a success
+                // (the backend may just be slow to update status)
+                if listener_ok {
                     let _ = (cloud_sync::IntegrationOAuthEvent::Success {
                         provider: poll_provider,
                     })
                     .emit(&app);
-                }
-                Err(e) => {
+                } else {
                     let _ = (cloud_sync::IntegrationOAuthEvent::Failed {
                         provider: poll_provider,
                         error: e.to_string(),
@@ -172,8 +183,8 @@ pub fn cloud_start_integration_oauth(
                     .emit(&app);
                 }
             }
-        });
-    }
+        }
+    });
 
     Ok(resp)
 }
