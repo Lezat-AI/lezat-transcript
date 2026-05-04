@@ -17,9 +17,7 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::{anyhow, Result};
 use log::{debug, info, warn};
-use wasapi::{
-    get_default_device, initialize_mta, Direction, SampleType, StreamMode, WaveFormat,
-};
+use wasapi::{get_default_device, initialize_mta, Direction, SampleType, StreamMode, WaveFormat};
 
 const WHISPER_SR: u32 = 16_000;
 
@@ -310,12 +308,9 @@ fn decode_mono(
         for c in 0..channels {
             let off = base + c * bytes_per_sample;
             let sample = match (sample_type, bits_per_sample) {
-                (SampleType::Float, 32) => f32::from_le_bytes([
-                    raw[off],
-                    raw[off + 1],
-                    raw[off + 2],
-                    raw[off + 3],
-                ]),
+                (SampleType::Float, 32) => {
+                    f32::from_le_bytes([raw[off], raw[off + 1], raw[off + 2], raw[off + 3]])
+                }
                 (SampleType::Int, 16) => {
                     let v = i16::from_le_bytes([raw[off], raw[off + 1]]);
                     v as f32 / i16::MAX as f32
@@ -332,12 +327,8 @@ fn decode_mono(
                     v as f32 / 8_388_608.0 // 2^23
                 }
                 (SampleType::Int, 32) => {
-                    let v = i32::from_le_bytes([
-                        raw[off],
-                        raw[off + 1],
-                        raw[off + 2],
-                        raw[off + 3],
-                    ]);
+                    let v =
+                        i32::from_le_bytes([raw[off], raw[off + 1], raw[off + 2], raw[off + 3]]);
                     v as f32 / i32::MAX as f32
                 }
                 _ => 0.0, // unsupported format — emit silence rather than panic

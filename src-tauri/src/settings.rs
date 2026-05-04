@@ -305,9 +305,24 @@ impl Default for OrtAcceleratorSetting {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptionMode {
+    /// Use cloud transcription (Lezat backend) as primary; fall back to local on failure.
+    Cloud,
+    /// Always use on-device model (original behavior).
+    Local,
+}
+
+impl Default for TranscriptionMode {
+    fn default() -> Self {
+        TranscriptionMode::Cloud
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Type)]
 #[serde(transparent)]
-pub(crate) struct SecretMap(HashMap<String, String>);
+pub struct SecretMap(HashMap<String, String>);
 
 impl fmt::Debug for SecretMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -455,6 +470,45 @@ pub struct AppSettings {
     pub whisper_gpu_device: i32,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
+
+    // ── Cloud Sync (Lezat Scheduling backend) ──
+    /// URL of the Lezat Scheduling backend (e.g. https://scheduling-lezat-backend-production.up.railway.app)
+    #[serde(default)]
+    pub cloud_sync_url: Option<String>,
+    /// API key for authenticating with the web backend. Generated in the web dashboard.
+    #[serde(default)]
+    pub cloud_sync_api_key: Option<String>,
+    /// Automatically send meeting transcriptions to the web backend when a meeting ends.
+    #[serde(default)]
+    pub cloud_sync_enabled: bool,
+    /// Transcription mode: Cloud uses the Lezat backend for ASR (primary),
+    /// Local uses the on-device Whisper/Parakeet model (fallback).
+    #[serde(default)]
+    pub transcription_mode: TranscriptionMode,
+    /// Unique device identifier, generated once per install. Used to create globally unique meeting IDs.
+    #[serde(default = "default_device_id")]
+    pub device_id: String,
+
+    // ── Timesheet (Lezat Timesheet backend) ──
+    /// URL of the Lezat Timesheet backend (e.g. https://timesheet.back.lezat.tech)
+    #[serde(default = "default_timesheet_url")]
+    pub timesheet_url: String,
+    /// Bearer token for authenticating with the Timesheet backend.
+    #[serde(default)]
+    pub timesheet_token: Option<String>,
+    /// Email of the authenticated timesheet user (display only).
+    #[serde(default)]
+    pub timesheet_email: Option<String>,
+    /// Stored password for automatic token renewal (no refresh-token API).
+    #[serde(default)]
+    pub timesheet_password: Option<String>,
+    /// Default project ID to use when creating time entries.
+    #[serde(default)]
+    pub timesheet_default_project_id: Option<i64>,
+    /// Mapping of cloud action-item ID → timesheet entry ID.
+    /// Used to track which tasks have already been logged.
+    #[serde(default)]
+    pub timesheet_task_entries: std::collections::HashMap<String, i64>,
 }
 
 fn default_model() -> String {
@@ -687,6 +741,23 @@ fn default_typing_tool() -> TypingTool {
     TypingTool::Auto
 }
 
+fn default_timesheet_url() -> String {
+    "https://timesheet.back.lezat.tech".to_string()
+}
+
+fn default_device_id() -> String {
+    // Generate a stable device ID from a random UUID. This is called once on
+    // first load and persisted; subsequent loads read the stored value.
+    use sha2::{Digest, Sha256};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let random_seed = std::process::id() as u128 ^ now;
+    let hash = Sha256::digest(random_seed.to_le_bytes());
+    format!("{:x}", hash)[..32].to_string()
+}
+
 fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     let mut changed = false;
     for provider in default_post_process_providers() {
@@ -850,6 +921,17 @@ pub fn get_default_settings() -> AppSettings {
         ort_accelerator: OrtAcceleratorSetting::default(),
         whisper_gpu_device: default_whisper_gpu_device(),
         extra_recording_buffer_ms: 0,
+        cloud_sync_url: None,
+        cloud_sync_api_key: None,
+        cloud_sync_enabled: false,
+        transcription_mode: TranscriptionMode::default(),
+        device_id: default_device_id(),
+        timesheet_url: default_timesheet_url(),
+        timesheet_token: None,
+        timesheet_email: None,
+        timesheet_password: None,
+        timesheet_default_project_id: None,
+        timesheet_task_entries: std::collections::HashMap::new(),
     }
 }
 
@@ -922,6 +1004,17 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
 
     if ensure_post_process_defaults(&mut settings) {
         store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
+
+    // One-time device_id generation for existing installs.
+    let device_id_migration_key = "__migrations_device_id_v1";
+    if store.get(device_id_migration_key).is_none() {
+        if settings.device_id.is_empty() {
+            settings.device_id = default_device_id();
+            store.set("settings", serde_json::to_value(&settings).unwrap());
+            info!("Settings migration: generated device_id for cloud sync");
+        }
+        store.set(device_id_migration_key, serde_json::Value::Bool(true));
     }
 
     // One-time meeting-audio default flip. The original defaults for both

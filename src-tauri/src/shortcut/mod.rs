@@ -1194,3 +1194,65 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
         .await
         .expect("get_available_accelerators panicked")
 }
+
+// ─── Cloud Sync settings ─────────────────────────────────────────
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_cloud_sync_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.cloud_sync_enabled = enabled;
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_cloud_sync_url_setting(app: AppHandle, url: Option<String>) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.cloud_sync_url = url.and_then(|u| {
+        let t = u.trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    });
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_cloud_sync_api_key_setting(
+    app: AppHandle,
+    api_key: Option<String>,
+) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.cloud_sync_api_key = api_key.and_then(|k| {
+        let t = k.trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    });
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_transcription_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.transcription_mode = match mode.as_str() {
+        "cloud" => settings::TranscriptionMode::Cloud,
+        "local" => settings::TranscriptionMode::Local,
+        other => {
+            log::warn!("Invalid transcription mode '{other}', defaulting to cloud");
+            settings::TranscriptionMode::Cloud
+        }
+    };
+    settings::write_settings(&app, s);
+    Ok(())
+}

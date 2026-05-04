@@ -5,6 +5,8 @@ mod audio_feedback;
 pub mod audio_toolkit;
 pub mod cli;
 mod clipboard;
+pub mod cloud_sync;
+mod cloud_transcription;
 mod commands;
 mod helpers;
 mod input;
@@ -15,6 +17,7 @@ pub mod portable;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod timesheet;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -443,12 +446,50 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_capture_system_audio_setting,
             shortcut::change_save_meeting_audio_setting,
             shortcut::change_transcription_initial_prompt_setting,
+            shortcut::change_cloud_sync_enabled_setting,
+            shortcut::change_cloud_sync_url_setting,
+            shortcut::change_cloud_sync_api_key_setting,
+            shortcut::change_transcription_mode_setting,
+            commands::cloud_sync::cloud_sync_meeting,
+            commands::cloud_sync::cloud_test_connection,
+            commands::cloud_sync::cloud_get_action_items,
+            commands::cloud_sync::cloud_update_action_item,
+            commands::cloud_sync::cloud_get_transcriptions,
+            commands::cloud_sync::cloud_get_integrations_status,
+            commands::cloud_sync::cloud_start_integration_oauth,
+            commands::cloud_sync::cloud_disconnect_integration,
+            commands::cloud_sync::cloud_login,
+            commands::cloud_sync::cloud_register,
+            commands::cloud_sync::cloud_login_google,
+            commands::cloud_sync::cloud_get_daily_reports,
+            commands::cloud_sync::cloud_get_notion_databases,
+            commands::cloud_sync::cloud_get_monday_boards,
+            commands::cloud_sync::cloud_get_notion_status_options,
+            commands::cloud_sync::cloud_get_monday_status_options,
+            commands::cloud_sync::cloud_update_integration_settings,
+            commands::timesheet::timesheet_login,
+            commands::timesheet::timesheet_disconnect,
+            commands::timesheet::timesheet_get_status,
+            commands::timesheet::timesheet_get_projects,
+            commands::timesheet::timesheet_set_default_project,
+            commands::timesheet::timesheet_create_entry,
+            commands::timesheet::timesheet_get_entry,
+            commands::timesheet::timesheet_delete_entry,
+            commands::timesheet::timesheet_update_entry,
+            commands::timesheet::timesheet_get_task_entries,
+            commands::timesheet::timesheet_save_task_entries,
+            commands::timesheet::timesheet_remove_task_entry,
+            commands::timesheet::timesheet_remove_entry_tasks,
+            commands::timesheet::timesheet_ai_suggest,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
             managers::meeting::MeetingTranscriptChunkEvent,
             managers::meeting::MeetingStateEvent,
+            cloud_sync::CloudSyncEvent,
+            cloud_sync::GoogleLoginEvent,
+            cloud_sync::IntegrationOAuthEvent,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds

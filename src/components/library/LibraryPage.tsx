@@ -13,6 +13,8 @@ import {
   FolderOpen,
   Check,
   Copy,
+  Cloud,
+  Loader2,
 } from "lucide-react";
 import {
   commands,
@@ -129,6 +131,7 @@ export function LibraryPage() {
   );
   const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [syncingIds, setSyncingIds] = useState<Set<number>>(new Set());
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -156,6 +159,19 @@ export function LibraryPage() {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // Auto-refresh when cloud sync completes (title may have been renamed).
+  useEffect(() => {
+    const p = listen<{ state: string }>(
+      "cloud-sync-event",
+      (evt) => {
+        if (evt.payload.state === "success") refresh();
+      },
+    );
+    return () => {
+      p.then((fn) => fn()).catch(() => undefined);
+    };
   }, [refresh]);
 
   // Live updates from both stores.
@@ -522,6 +538,39 @@ export function LibraryPage() {
                           ? "Copy dialog"
                           : "Copy transcript"}
                       </button>
+
+                      {item.kind === "meeting" && (
+                        <button
+                          onClick={async () => {
+                            setSyncingIds((prev) => new Set(prev).add(item.id));
+                            try {
+                              const res = await (commands as any).cloudSyncMeeting(item.id);
+                              if (res.status === "ok") {
+                                toast.success("Syncing meeting in background…");
+                              } else {
+                                toast.error(`Sync failed: ${res.error}`);
+                              }
+                            } catch (e) {
+                              toast.error(`Sync failed: ${e}`);
+                            } finally {
+                              setSyncingIds((prev) => {
+                                const next = new Set(prev);
+                                next.delete(item.id);
+                                return next;
+                              });
+                            }
+                          }}
+                          disabled={syncingIds.has(item.id)}
+                          className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40 inline-flex items-center gap-1"
+                        >
+                          {syncingIds.has(item.id) ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Cloud className="w-3 h-3" />
+                          )}
+                          {syncingIds.has(item.id) ? "Syncing…" : "Sync to cloud"}
+                        </button>
+                      )}
 
                       {isDictation && (
                         <>

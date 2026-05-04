@@ -1,8 +1,8 @@
 use crate::managers::model::{recommended_default_model_id, ModelInfo, ModelManager};
-use serde::Serialize;
-use specta::Type;
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
 use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
+use serde::Serialize;
+use specta::Type;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 

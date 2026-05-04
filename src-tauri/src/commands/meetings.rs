@@ -39,16 +39,18 @@ pub fn get_system_audio_availability() -> SystemAudioAvailability {
 pub fn meeting_start(
     app: AppHandle,
     title: Option<String>,
+    is_daily: Option<bool>,
 ) -> Result<i64, String> {
     let mgr = app
         .try_state::<Arc<MeetingManager>>()
         .ok_or_else(|| "MeetingManager not initialized".to_string())?;
-    mgr.start(title).map_err(|e| e.to_string())
+    mgr.start(title, is_daily.unwrap_or(false))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn meeting_stop(app: AppHandle) -> Result<MeetingRecord, String> {
+pub fn meeting_stop(app: AppHandle) -> Result<i64, String> {
     let mgr = app
         .try_state::<Arc<MeetingManager>>()
         .ok_or_else(|| "MeetingManager not initialized".to_string())?;
@@ -83,10 +85,7 @@ pub fn get_meeting(
 
 #[tauri::command]
 #[specta::specta]
-pub fn delete_meeting(
-    mgr: State<Arc<MeetingManager>>,
-    id: i64,
-) -> Result<(), String> {
+pub fn delete_meeting(mgr: State<Arc<MeetingManager>>, id: i64) -> Result<(), String> {
     mgr.store().delete(id).map_err(|e| e.to_string())
 }
 
@@ -134,10 +133,12 @@ pub fn export_meeting_audio(
     let dest = std::path::PathBuf::from(&destination);
     if let Some(parent) = dest.parent() {
         if !parent.exists() {
-            return Err(format!("Destination directory does not exist: {}", parent.display()));
+            return Err(format!(
+                "Destination directory does not exist: {}",
+                parent.display()
+            ));
         }
     }
-    std::fs::copy(&src, &dest)
-        .map_err(|e| format!("Copy failed: {e}"))?;
+    std::fs::copy(&src, &dest).map_err(|e| format!("Copy failed: {e}"))?;
     Ok(())
 }

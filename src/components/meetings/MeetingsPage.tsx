@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink, Save, Pencil, Download } from "lucide-react";
+import { Mic, Square, Trash2, Loader2, Speaker, ExternalLink, Save, Pencil, Download, Cloud, CloudOff, CheckCircle2, RefreshCw, ListChecks } from "lucide-react";
 import { commands } from "@/bindings";
 import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
@@ -146,6 +146,10 @@ export function MeetingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sysAudio, setSysAudio] = useState<SystemAudioAvailability | null>(null);
+  const [isDaily, setIsDaily] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<
+    Record<number, { state: "syncing" | "success" | "failed"; message?: string }>
+  >({});
 
   const elapsedStart = useRef<number | null>(null);
   const liveEndRef = useRef<HTMLDivElement | null>(null);
@@ -188,6 +192,31 @@ export function MeetingsPage() {
       active = false;
     };
   }, [captureSystemAudio]);
+
+  // Listen for cloud sync events so we can show sync status badges.
+  const EVT_CLOUD_SYNC = "cloud-sync-event";
+  useEffect(() => {
+    const p = listen<{ state: string; meeting_id: number; remote_id?: string; error?: string }>(
+      EVT_CLOUD_SYNC,
+      (evt) => {
+        const { state, meeting_id, error: errMsg } = evt.payload;
+        if (state === "syncing") {
+          setSyncStatus((prev) => ({ ...prev, [meeting_id]: { state: "syncing" } }));
+        } else if (state === "success") {
+          setSyncStatus((prev) => ({ ...prev, [meeting_id]: { state: "success" } }));
+          refreshList(); // Refresh to pick up AI-suggested title
+        } else if (state === "failed") {
+          setSyncStatus((prev) => ({
+            ...prev,
+            [meeting_id]: { state: "failed", message: errMsg },
+          }));
+        }
+      },
+    );
+    return () => {
+      p.then((fn) => fn()).catch(() => undefined);
+    };
+  }, [refreshList]);
 
   // Elapsed timer tick.
   useEffect(() => {
@@ -246,7 +275,7 @@ export function MeetingsPage() {
     setError(null);
     setBusy(true);
     try {
-      const res = await commands.meetingStart(null);
+      const res = await (commands as any).meetingStart(null, isDaily);
       if (res.status === "ok") {
         setActiveId(res.data);
         setLiveChunks([]);
@@ -263,12 +292,12 @@ export function MeetingsPage() {
     setBusy(true);
     try {
       const res = await commands.meetingStop();
-      if (res.status === "ok") {
-        setActiveId(null);
-        refreshList();
-      } else {
+      if (res.status !== "ok") {
         setError(res.error);
       }
+      // The actual cleanup (join threads, finalize DB, cloud sync) happens
+      // in a background thread. The meeting-state-event "stopped" listener
+      // above will clear activeId and refresh the list when it's done.
     } finally {
       setBusy(false);
     }
@@ -428,6 +457,20 @@ export function MeetingsPage() {
               (opt-in — a 45-min meeting is ~80 MB per source)
             </span>
           </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm">
+            <input
+              type="checkbox"
+              checked={isDaily}
+              onChange={() => setIsDaily(!isDaily)}
+              className="accent-lezat-sage"
+              disabled={activeId !== null}
+            />
+            <ListChecks className="w-4 h-4" />
+            <span>Daily standup</span>
+            <span className="text-xs text-mid-gray">
+              (extracts completed tasks for timesheet)
+            </span>
+          </label>
         </div>
 
         {error && (
@@ -436,6 +479,69 @@ export function MeetingsPage() {
           </div>
         )}
       </section>
+
+      {/* Cloud sync status for last completed meeting */}
+      {Object.entries(syncStatus).length > 0 && (
+        <div className="flex flex-col gap-2">
+          {Object.entries(syncStatus).map(([id, status]) => (
+            <div
+              key={id}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
+                status.state === "syncing"
+                  ? "bg-blue-500/10 text-blue-500"
+                  : status.state === "success"
+                    ? "bg-green-500/10 text-green-500"
+                    : "bg-red-500/10 text-red-500"
+              }`}
+            >
+              {status.state === "syncing" && (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Syncing meeting to Lezat Scheduling...</span>
+                </>
+              )}
+              {status.state === "success" && (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Meeting synced to Lezat Scheduling</span>
+                </>
+              )}
+              {status.state === "failed" && (
+                <>
+                  <CloudOff className="w-4 h-4" />
+                  <span className="flex-1 truncate">
+                    Sync failed{status.message ? `: ${status.message}` : ""}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      setSyncStatus((prev) => ({
+                        ...prev,
+                        [id]: { state: "syncing" },
+                      }));
+                      const result = await (commands as any).cloudSyncMeeting(Number(id));
+                      if (result.status === "ok") {
+                        setSyncStatus((prev) => ({
+                          ...prev,
+                          [id]: { state: "success" },
+                        }));
+                      } else {
+                        setSyncStatus((prev) => ({
+                          ...prev,
+                          [id]: { state: "failed", message: result.error },
+                        }));
+                      }
+                    }}
+                    className="shrink-0 p-1 rounded hover:bg-red-500/20 transition-colors"
+                    title="Retry sync"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Live transcript during active meeting */}
       {activeId !== null && (

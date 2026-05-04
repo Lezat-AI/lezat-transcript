@@ -1,8 +1,10 @@
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
+use crate::cloud_transcription;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
-    get_settings, ModelUnloadTimeout, OrtAcceleratorSetting, WhisperAcceleratorSetting,
+    get_settings, ModelUnloadTimeout, OrtAcceleratorSetting, TranscriptionMode,
+    WhisperAcceleratorSetting,
 };
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -481,6 +483,52 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
+        let settings = get_settings(&self.app_handle);
+
+        // ── Cloud transcription path ──────────────────────────────────
+        if settings.transcription_mode == TranscriptionMode::Cloud
+            && cloud_transcription::is_cloud_available(&settings)
+        {
+            let language = if settings.selected_language == "auto" {
+                "auto".to_string()
+            } else {
+                settings.selected_language.clone()
+            };
+
+            match cloud_transcription::transcribe_cloud(&settings, &audio, &language) {
+                Ok(resp) => {
+                    let et = std::time::Instant::now();
+                    let text = resp.text.trim().to_string();
+                    info!(
+                        "Cloud transcription completed in {}ms",
+                        (et - st).as_millis()
+                    );
+                    if text.is_empty() {
+                        info!("Cloud transcription result is empty");
+                    } else {
+                        info!("Cloud transcription result: {}", text);
+                    }
+                    return Ok(text);
+                }
+                Err(e) => {
+                    warn!("Cloud transcription failed, falling back to local: {e}");
+                    // Fall through to local transcription below.
+                    // If no model is loaded, try to load one for the fallback.
+                    let engine_guard = self.lock_engine();
+                    if engine_guard.is_none() && !settings.selected_model.is_empty() {
+                        drop(engine_guard);
+                        info!("Loading local model for fallback transcription");
+                        if let Err(load_err) = self.load_model(&settings.selected_model) {
+                            return Err(anyhow::anyhow!(
+                                "Cloud transcription failed ({e}) and local model failed to load: {load_err}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Local transcription path ──────────────────────────────────
         // Check if model is loaded, if not try to load it
         {
             // If the model is loading, wait for it to complete.
@@ -494,9 +542,6 @@ impl TranscriptionManager {
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
             }
         }
-
-        // Get current settings for configuration
-        let settings = get_settings(&self.app_handle);
 
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.

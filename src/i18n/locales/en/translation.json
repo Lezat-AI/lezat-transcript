@@ -18,7 +18,10 @@
     "history": "History",
     "debug": "Debug",
     "about": "About",
-    "acknowledgments": "Acknowledgments"
+    "acknowledgments": "Acknowledgments",
+    "cloudSync": "Cloud Sync",
+    "actionItems": "Meeting Tasks",
+    "integrations": "Integrations"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -157,6 +160,17 @@
     "modelSettings": {
       "title": "{{model}} Settings",
       "noSettingsNeeded": "This model works automatically with no configuration needed."
+    },
+    "transcription": {
+      "languageTitle": "Language",
+      "mode": {
+        "title": "Transcription Engine",
+        "cloud": "Cloud",
+        "cloudDesc": "Best quality, handles code-switching",
+        "local": "Local",
+        "localDesc": "On-device, works offline",
+        "cloudUnavailable": "Sign in to Lezat Cloud to enable cloud transcription."
+      }
     },
     "general": {
       "title": "General",
@@ -540,6 +554,62 @@
           "details": "Lezat Transcript uses Whisper.cpp for fast, local speech-to-text processing. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
+    },
+    "cloudSync": {
+      "title": "Lezat Scheduling",
+      "onboarding": {
+        "title": "Connect to Lezat Scheduling",
+        "subtitle": "Sign in to automatically sync your meeting transcriptions, extract action items, and push them to your team's tools."
+      },
+      "features": {
+        "sync": {
+          "title": "Meeting Sync",
+          "desc": "Transcriptions are sent to your team workspace automatically after each meeting"
+        },
+        "actions": {
+          "title": "Meeting Tasks",
+          "desc": "AI extracts tasks, assigns owners, and tracks due dates from your meetings"
+        },
+        "integrations": {
+          "title": "Integrations",
+          "desc": "Push action items to Notion, Monday.com, Google Calendar, or Outlook"
+        },
+        "team": {
+          "title": "Team Dashboard",
+          "desc": "Your team can view transcriptions and action items from the web dashboard"
+        }
+      },
+      "login": {
+        "title": "Sign in to your account",
+        "google": "Continue with Google",
+        "or": "or",
+        "withEmail": "Sign in with email",
+        "email": "Email",
+        "password": "Password",
+        "signIn": "Sign In",
+        "waitingGoogle": "Complete sign-in in your browser...",
+        "cancel": "Cancel",
+        "noAccount": "Don't have an account?",
+        "signUpLink": "Sign up",
+        "hasAccount": "Already have an account?",
+        "signInLink": "Sign in",
+        "registerTitle": "Create your account",
+        "fullName": "Full name",
+        "confirmPassword": "Confirm password",
+        "signUp": "Sign Up",
+        "passwordMismatch": "Passwords do not match"
+      },
+      "connected": {
+        "title": "Connected to Lezat Scheduling",
+        "whatYouGet": "What's included"
+      },
+      "autoSync": {
+        "title": "Auto-sync meetings",
+        "desc": "Send meeting transcriptions to your team workspace automatically when a meeting ends"
+      },
+      "logout": "Disconnect",
+      "connectionSuccess": "Connected",
+      "connectionFailed": "Connection failed"
     }
   },
   "footer": {
@@ -611,5 +681,83 @@
   "overlay": {
     "transcribing": "Transcribing...",
     "processing": "Processing..."
+  },
+  "actionItems": {
+    "title": "Meeting Tasks",
+    "notConfigured": "Cloud Sync not configured",
+    "configureHint": "Set up Cloud Sync in the Cloud Sync settings to see action items from your meetings",
+    "empty": "No action items yet. They will appear here after your meetings are transcribed.",
+    "retry": "Try Again",
+    "refresh": "Refresh",
+    "summary": "{{total}} items across {{meetings}} meetings",
+    "untitledMeeting": "Untitled Meeting",
+    "approval": {
+      "title": "Sync this task to:",
+      "approve": "Approve & Sync",
+      "noIntegrations": "No integrations connected. Go to Integrations to set up.",
+      "kanban": "Database",
+      "board": "Board",
+      "status": "Status"
+    },
+    "bulk": {
+      "selected": "{{count}} tasks selected",
+      "clear": "Clear selection",
+      "approve": "Approve {{count}} tasks",
+      "addToTimesheet": "Add to timesheet",
+      "selectGroup": "Select all pending in this meeting"
+    },
+    "previousTask": "Previous task",
+    "loadMore": "Show more meetings ({{remaining}} remaining)"
+  },
+  "integrations": {
+    "title": "Integrations",
+    "notConfigured": "Cloud Sync not configured",
+    "configureHint": "Set up Cloud Sync in the Cloud Sync settings to manage your integrations",
+    "connected": "Connected",
+    "disconnected": "Not connected",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "configure": "Configure",
+    "dismiss": "Dismiss",
+    "refresh": "Refresh",
+    "empty": "No integrations available",
+    "notion": {
+      "database": "Notion Database",
+      "status": "Task Status"
+    },
+    "monday": {
+      "board": "Monday Board"
+    },
+    "timesheet": {
+      "title": "Timesheet",
+      "email": "Email",
+      "password": "Password",
+      "login": "Sign In",
+      "loggingIn": "Signing in...",
+      "loginError": "Login failed. Check your credentials.",
+      "project": "Default Project",
+      "hours": "Hours",
+      "hoursPlaceholder": "e.g. 1h 30m",
+      "description": "Description",
+      "descriptionPlaceholder": "What did you work on?",
+      "date": "Date",
+      "submit": "Log Time",
+      "submitting": "Submitting...",
+      "update": "Update",
+      "updating": "Updating...",
+      "delete": "Delete",
+      "deleting": "Deleting...",
+      "success": "Time entry created successfully",
+      "updateSuccess": "Time entry updated",
+      "deleteSuccess": "Time entry deleted",
+      "addEntry": "Add Time Entry",
+      "editEntry": "Edit Time Entry",
+      "logged": "Logged",
+      "approved": "Approved",
+      "aiSuggest": "AI Suggest",
+      "notConnected": "Connect to Timesheet first in Integrations settings.",
+      "sessionExpired": "Your Timesheet session has expired.",
+      "reconnectHint": "Go to Integrations and sign in to Timesheet again."
+    }
   }
 }

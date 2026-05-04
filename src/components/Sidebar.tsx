@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
-import { Cog, FlaskConical, Heart, Info, Library, Sparkles, Cpu, Video } from "lucide-react";
+import { Cog, FlaskConical, Heart, Info, Library, Sparkles, Cpu, Video, Cloud, ListChecks, Plug } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
@@ -13,10 +13,13 @@ import {
   AboutSettings,
   PostProcessingSettings,
   ModelsSettings,
+  CloudSyncSettings,
 } from "./settings";
 import MeetingsPage from "./meetings/MeetingsPage";
 import LibraryPage from "./library/LibraryPage";
 import AcknowledgmentsPage from "./acknowledgments/AcknowledgmentsPage";
+import ActionItemsPage from "./action-items/ActionItemsPage";
+import IntegrationsPage from "./integrations/IntegrationsPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -60,15 +63,30 @@ export const SECTIONS_CONFIG = {
     component: ModelsSettings,
     enabled: () => true,
   },
+  cloudSync: {
+    labelKey: "sidebar.cloudSync",
+    icon: Cloud,
+    component: CloudSyncSettings,
+    enabled: () => true,
+  },
+  actionItems: {
+    labelKey: "sidebar.actionItems",
+    icon: ListChecks,
+    component: ActionItemsPage,
+    enabled: (settings) => !!settings?.cloud_sync_enabled,
+  },
+  integrations: {
+    labelKey: "sidebar.integrations",
+    icon: Plug,
+    component: IntegrationsPage,
+    enabled: (settings) => !!settings?.cloud_sync_enabled,
+  },
   advanced: {
     labelKey: "sidebar.advanced",
     icon: Cog,
     component: AdvancedSettings,
     enabled: () => true,
   },
-  // history: dropped — Library tab is the canonical browse view for both
-  // dictations and meetings (audio playback, retry transcription, star,
-  // and download all live there now).
   postprocessing: {
     labelKey: "sidebar.postProcessing",
     icon: Sparkles,

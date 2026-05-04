@@ -200,10 +200,7 @@ fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, initial_r
             ticks_since_rate_check = 0;
             let r = unsafe { lezat_sysaudio_sample_rate() };
             if r > 0 && (r as u32) != cached_rate {
-                info!(
-                    "Native system audio: rate updated {cached_rate} -> {}",
-                    r
-                );
+                info!("Native system audio: rate updated {cached_rate} -> {}", r);
                 cached_rate = r as u32;
             }
         }
@@ -243,9 +240,7 @@ fn run_poll_loop(inner: Arc<Mutex<Inner>>, stop_flag: Arc<AtomicBool>, initial_r
         total_samples += n as u64;
 
         if !first_sample_logged {
-            info!(
-                "Native system audio: first {n} samples arrived at {cached_rate} Hz"
-            );
+            info!("Native system audio: first {n} samples arrived at {cached_rate} Hz");
             first_sample_logged = true;
         }
 

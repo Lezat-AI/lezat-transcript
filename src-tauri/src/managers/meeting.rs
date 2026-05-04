@@ -30,14 +30,14 @@ use tauri_specta::Event;
 use hound::{SampleFormat, WavSpec, WavWriter};
 use std::fs;
 
+#[cfg(target_os = "macos")]
+use crate::audio_toolkit::macos_native_audio::MacosNativeAudioRecorder;
 use crate::audio_toolkit::system_audio::{
     resolve_system_audio_device, SystemAudioSource, SystemAudioStatus,
 };
-use crate::audio_toolkit::{list_input_devices, AudioRecorder};
-#[cfg(target_os = "macos")]
-use crate::audio_toolkit::macos_native_audio::MacosNativeAudioRecorder;
 #[cfg(target_os = "windows")]
 use crate::audio_toolkit::wasapi_loopback::WasapiLoopbackRecorder;
+use crate::audio_toolkit::{list_input_devices, AudioRecorder};
 use crate::managers::transcription::TranscriptionManager;
 use crate::portable;
 use crate::settings::get_settings;
@@ -86,8 +86,7 @@ impl SourceCapture {
 }
 
 fn open_cpal(device: Option<cpal::Device>) -> Result<SourceCapture> {
-    let mut r = AudioRecorder::new()
-        .map_err(|e| anyhow!("AudioRecorder::new failed: {e}"))?;
+    let mut r = AudioRecorder::new().map_err(|e| anyhow!("AudioRecorder::new failed: {e}"))?;
     r.open(device)
         .map_err(|e| anyhow!("Recorder open failed: {e}"))?;
     Ok(SourceCapture::Cpal(r))
@@ -137,6 +136,8 @@ pub struct MeetingRecord {
     pub transcript_text: String,
     pub chunks: Vec<MeetingChunk>,
     pub audio_path: Option<String>,
+    #[serde(default)]
+    pub is_daily: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
@@ -153,7 +154,10 @@ pub enum MeetingStateEvent {
     #[serde(rename = "stopped")]
     Stopped { meeting_id: i64 },
     #[serde(rename = "error")]
-    Error { meeting_id: Option<i64>, message: String },
+    Error {
+        meeting_id: Option<i64>,
+        message: String,
+    },
 }
 
 // ─────────────────────────────── store ───────────────────────────────
@@ -188,15 +192,19 @@ impl MeetingsStore {
             transcript_text: row.get("transcript_text")?,
             chunks,
             audio_path: row.get("audio_path")?,
+            is_daily: row.get::<_, i64>("is_daily").unwrap_or(0) != 0,
         })
     }
 
-    pub fn insert(&self, title: &str, started_at: i64) -> Result<i64> {
+    pub fn insert(&self, title: &str, started_at: i64, is_daily: bool) -> Result<i64> {
         let conn = self.conn()?;
+        // Ensure the is_daily column exists (migration for existing DBs)
+        conn.execute_batch("ALTER TABLE meetings ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0;")
+            .ok(); // Ignore error if column already exists
         conn.execute(
-            "INSERT INTO meetings (started_at, title, duration_ms, transcript_text, chunks_json)
-             VALUES (?1, ?2, 0, '', '[]')",
-            params![started_at, title],
+            "INSERT INTO meetings (started_at, title, duration_ms, transcript_text, chunks_json, is_daily)
+             VALUES (?1, ?2, 0, '', '[]', ?3)",
+            params![started_at, title, is_daily as i64],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -211,8 +219,7 @@ impl MeetingsStore {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
 
-        let mut chunks: Vec<MeetingChunk> =
-            serde_json::from_str(&chunks_json).unwrap_or_default();
+        let mut chunks: Vec<MeetingChunk> = serde_json::from_str(&chunks_json).unwrap_or_default();
         chunks.push(chunk.clone());
 
         let new_text = if transcript_text.is_empty() {
@@ -243,9 +250,7 @@ impl MeetingsStore {
     /// opportunistically on meeting finalize.
     pub fn prune_older_than(&self, cutoff_ts: i64) -> Result<usize> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT id, audio_path FROM meetings WHERE started_at < ?1",
-        )?;
+        let mut stmt = conn.prepare("SELECT id, audio_path FROM meetings WHERE started_at < ?1")?;
         let rows: Vec<(i64, Option<String>)> = stmt
             .query_map(params![cutoff_ts], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
@@ -364,7 +369,7 @@ impl MeetingManager {
         Ok(Self {
             app: app.clone(),
             store: Arc::new(MeetingsStore::new(app)?),
-        active: Arc::new(Mutex::new(None)),
+            active: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -377,7 +382,7 @@ impl MeetingManager {
     }
 
     /// Start a new meeting. Returns the meeting_id.
-    pub fn start(&self, title: Option<String>) -> Result<i64> {
+    pub fn start(&self, title: Option<String>, is_daily: bool) -> Result<i64> {
         let mut slot = self.active.lock().unwrap();
         if let Some(active) = slot.as_ref() {
             return Err(anyhow!("Meeting already in progress (id={})", active.id));
@@ -386,19 +391,22 @@ impl MeetingManager {
         let settings = get_settings(&self.app);
         let started_at = Utc::now().timestamp();
         let title = title.unwrap_or_else(|| default_title(started_at));
-        let id = self.store.insert(&title, started_at)?;
+        let id = self.store.insert(&title, started_at, is_daily)?;
 
         // Make sure the transcription engine is hot before we start capturing.
-        // The dictation flow auto-loads the model on the first hotkey press,
-        // but meetings go straight to `transcribe()` and used to fail with
-        // "Model is not loaded for transcription" if the user hadn't used
-        // dictation first. Load-if-needed here is idempotent.
-        if let Some(tm) = self.app.try_state::<Arc<TranscriptionManager>>() {
-            if let Err(e) = tm.load_model(&settings.selected_model) {
-                warn!(
-                    "Meeting {id}: failed to preload transcription model {}: {e}",
-                    settings.selected_model
-                );
+        // Skip preloading when cloud transcription is the primary mode — the
+        // cloud path in TranscriptionManager.transcribe() will handle it, and
+        // the fallback auto-loads a local model if needed.
+        let use_cloud = settings.transcription_mode == crate::settings::TranscriptionMode::Cloud
+            && crate::cloud_transcription::is_cloud_available(&settings);
+        if !use_cloud {
+            if let Some(tm) = self.app.try_state::<Arc<TranscriptionManager>>() {
+                if let Err(e) = tm.load_model(&settings.selected_model) {
+                    warn!(
+                        "Meeting {id}: failed to preload transcription model {}: {e}",
+                        settings.selected_model
+                    );
+                }
             }
         }
 
@@ -412,7 +420,8 @@ impl MeetingManager {
                 .join(id.to_string());
             fs::create_dir_all(&dir)
                 .map_err(|e| anyhow!("Failed to create meeting audio dir: {e}"))?;
-            self.store.set_audio_path(id, dir.to_string_lossy().as_ref())?;
+            self.store
+                .set_audio_path(id, dir.to_string_lossy().as_ref())?;
             Some(dir)
         } else {
             None
@@ -423,8 +432,8 @@ impl MeetingManager {
 
         // Always spawn the microphone loop (cpal).
         let mic_device = resolve_mic_device(&settings);
-        let mic_capture = open_cpal(mic_device)
-            .map_err(|e| anyhow!("Failed to open mic capture: {e}"))?;
+        let mic_capture =
+            open_cpal(mic_device).map_err(|e| anyhow!("Failed to open mic capture: {e}"))?;
         let mic_wav_path = audio_dir.as_ref().map(|d| d.join("mic.wav"));
         handles.push(spawn_recording_loop(
             self.app.clone(),
@@ -458,8 +467,7 @@ impl MeetingManager {
                     };
                     match capture_result {
                         Ok(capture) => {
-                            let sys_wav_path =
-                                audio_dir.as_ref().map(|d| d.join("system.wav"));
+                            let sys_wav_path = audio_dir.as_ref().map(|d| d.join("system.wav"));
                             handles.push(spawn_recording_loop(
                                 self.app.clone(),
                                 self.store.clone(),
@@ -486,9 +494,7 @@ impl MeetingManager {
                     );
                     let _ = (MeetingStateEvent::Error {
                         meeting_id: Some(id),
-                        message: format!(
-                            "System audio is enabled but not set up: {install_hint}"
-                        ),
+                        message: format!("System audio is enabled but not set up: {install_hint}"),
                     })
                     .emit(&self.app);
                 }
@@ -519,59 +525,124 @@ impl MeetingManager {
         Ok(id)
     }
 
-    /// Stop the active meeting. Returns the finalized record.
-    pub fn stop(&self) -> Result<MeetingRecord> {
+    /// Stop the active meeting. Returns the meeting id immediately and
+    /// spawns a background thread to join recording threads, finalize the
+    /// DB record, and optionally cloud-sync. This keeps the Tauri command
+    /// thread free so the UI never freezes while waiting for an in-flight
+    /// transcription to finish.
+    pub fn stop(&self) -> Result<i64> {
         let mut slot = self.active.lock().unwrap();
         let active = slot
             .take()
             .ok_or_else(|| anyhow!("No meeting in progress"))?;
 
+        let meeting_id = active.id;
+
+        // Signal recording threads to exit as soon as possible.
         active.stop_flag.store(true, Ordering::SeqCst);
-        // Release the lock before join so a racing start() gets a fresh `None`.
         drop(slot);
 
-        for h in active.handles {
-            let _ = h.join();
-        }
-
-        let duration_ms = active.started.elapsed().as_millis() as i64;
-        let ended_at = Utc::now().timestamp();
-        self.store.finalize(active.id, ended_at, duration_ms)?;
-
-        // Opportunistic retention cleanup — mirror whatever the user set for
-        // dictation history.
-        let settings = get_settings(&self.app);
-        if let Some(cutoff) = retention_cutoff_ts(&settings.recording_retention_period, ended_at) {
-            match self.store.prune_older_than(cutoff) {
-                Ok(n) if n > 0 => info!("Pruned {n} old meeting(s) past the retention cutoff"),
-                Ok(_) => {}
-                Err(e) => warn!("Meeting retention prune failed: {e}"),
+        // Move the heavy join + finalize work to a background thread so the
+        // calling Tauri command returns instantly.
+        let store = self.store.clone();
+        let app = self.app.clone();
+        thread::spawn(move || {
+            // Wait for recording threads to finish (may block briefly if
+            // a transcription was already in flight when stop was signalled).
+            for h in active.handles {
+                let _ = h.join();
             }
-        }
 
-        let _ = (MeetingStateEvent::Stopped {
-            meeting_id: active.id,
-        })
-        .emit(&self.app);
+            let duration_ms = active.started.elapsed().as_millis() as i64;
+            let ended_at = Utc::now().timestamp();
+            if let Err(e) = store.finalize(meeting_id, ended_at, duration_ms) {
+                error!("Failed to finalize meeting {meeting_id}: {e}");
+            }
 
-        self.store
-            .get(active.id)?
-            .ok_or_else(|| anyhow!("Meeting {} missing after finalize", active.id))
+            // Opportunistic retention cleanup.
+            let settings = get_settings(&app);
+            if let Some(cutoff) =
+                retention_cutoff_ts(&settings.recording_retention_period, ended_at)
+            {
+                match store.prune_older_than(cutoff) {
+                    Ok(n) if n > 0 => {
+                        info!("Pruned {n} old meeting(s) past the retention cutoff")
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!("Meeting retention prune failed: {e}"),
+                }
+            }
+
+            let _ = (MeetingStateEvent::Stopped { meeting_id }).emit(&app);
+
+            // Auto-sync to Lezat Scheduling backend if enabled.
+            if settings.cloud_sync_enabled
+                && settings.cloud_sync_url.is_some()
+                && settings.cloud_sync_api_key.is_some()
+            {
+                let record = match store.get(meeting_id) {
+                    Ok(Some(r)) => r,
+                    Ok(None) => {
+                        warn!("Meeting {meeting_id} not found for cloud sync");
+                        return;
+                    }
+                    Err(e) => {
+                        warn!("Failed to load meeting {meeting_id} for cloud sync: {e}");
+                        return;
+                    }
+                };
+
+                use crate::cloud_sync;
+                let _ = (cloud_sync::CloudSyncEvent::Syncing { meeting_id }).emit(&app);
+
+                match cloud_sync::sync_meeting_to_cloud(&settings, &record) {
+                    Ok(resp) => {
+                        info!(
+                            "Meeting {} synced to cloud: {}",
+                            meeting_id, resp.stored_record_id
+                        );
+
+                        if let Some(ref title) = resp.suggested_title {
+                            if let Some(mgr) = app.try_state::<Arc<MeetingManager>>() {
+                                if let Err(e) = mgr.store().rename(meeting_id, title) {
+                                    warn!("Failed to apply suggested title: {e}");
+                                } else {
+                                    info!("Meeting {meeting_id} renamed to: {title}");
+                                }
+                            }
+                        }
+
+                        let _ = (cloud_sync::CloudSyncEvent::Success {
+                            meeting_id,
+                            remote_id: resp.stored_record_id,
+                        })
+                        .emit(&app);
+                    }
+                    Err(e) => {
+                        warn!("Cloud sync failed for meeting {}: {}", meeting_id, e);
+                        let _ = (cloud_sync::CloudSyncEvent::Failed {
+                            meeting_id,
+                            error: e.to_string(),
+                        })
+                        .emit(&app);
+                    }
+                }
+            }
+        });
+
+        Ok(meeting_id)
     }
 }
 
 /// Resolve the mic device from settings, or default to cpal's default input.
 fn resolve_mic_device(settings: &crate::settings::AppSettings) -> Option<cpal::Device> {
-    settings
-        .selected_microphone
-        .as_ref()
-        .and_then(|name| {
-            list_input_devices()
-                .ok()?
-                .into_iter()
-                .find(|d| d.name == *name)
-                .map(|d| d.device)
-        })
+    settings.selected_microphone.as_ref().and_then(|name| {
+        list_input_devices()
+            .ok()?
+            .into_iter()
+            .find(|d| d.name == *name)
+            .map(|d| d.device)
+    })
 }
 
 fn retention_cutoff_ts(
@@ -615,13 +686,7 @@ fn spawn_recording_loop(
         .name(format!("meeting-{meeting_id}-{source}"))
         .spawn(move || {
             if let Err(e) = run_recording_loop(
-                &app,
-                &store,
-                meeting_id,
-                &stop_flag,
-                &source,
-                capture,
-                wav_path,
+                &app, &store, meeting_id, &stop_flag, &source, capture, wav_path,
             ) {
                 error!("Meeting {meeting_id} [{source}] recording loop failed: {e}");
                 let _ = (MeetingStateEvent::Error {
@@ -663,9 +728,7 @@ fn run_recording_loop(
                 );
                 wav_writer = Some(w);
             }
-            Err(e) => warn!(
-                "Meeting {meeting_id} [{source}]: failed to open WAV writer: {e}"
-            ),
+            Err(e) => warn!("Meeting {meeting_id} [{source}]: failed to open WAV writer: {e}"),
         }
     }
 
@@ -720,12 +783,20 @@ fn run_recording_loop(
                 let clamped = s.max(-1.0).min(1.0);
                 let pcm = (clamped * i16::MAX as f32) as i16;
                 if let Err(e) = w.write_sample(pcm) {
-                    warn!(
-                        "Meeting {meeting_id} [{source}]: WAV write failed: {e}"
-                    );
+                    warn!("Meeting {meeting_id} [{source}]: WAV write failed: {e}");
                     break;
                 }
             }
+        }
+
+        // If stop was requested while we were draining/saving audio, skip
+        // transcription entirely so the thread exits fast and join() in
+        // MeetingManager::stop() doesn't block the UI for seconds.
+        if stop_flag.load(Ordering::SeqCst) {
+            debug!(
+                "Meeting {meeting_id} [{source}]: stop requested, skipping final chunk transcription"
+            );
+            break;
         }
 
         // Transcribe on THIS thread (one chunk at a time per source). The
@@ -753,11 +824,7 @@ fn run_recording_loop(
                     if let Err(e) = store.append_chunk(meeting_id, &chunk) {
                         error!("Failed to persist chunk: {e}");
                     }
-                    let _ = (MeetingTranscriptChunkEvent {
-                        meeting_id,
-                        chunk,
-                    })
-                    .emit(app);
+                    let _ = (MeetingTranscriptChunkEvent { meeting_id, chunk }).emit(app);
                 }
             }
             Err(e) => {
@@ -773,9 +840,7 @@ fn run_recording_loop(
     let _ = recorder.close();
     if let Some(w) = wav_writer.take() {
         if let Err(e) = w.finalize() {
-            warn!(
-                "Meeting {meeting_id} [{source}]: failed to finalize WAV: {e}"
-            );
+            warn!("Meeting {meeting_id} [{source}]: failed to finalize WAV: {e}");
         }
     }
     info!("Meeting {meeting_id} [{source}]: recording loop exited cleanly");

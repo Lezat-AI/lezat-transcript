@@ -44,7 +44,10 @@ pub enum SystemAudioSource {
 
 pub enum SystemAudioStatus {
     /// Capture is available and a source has been resolved.
-    Available { source: SystemAudioSource, label: String },
+    Available {
+        source: SystemAudioSource,
+        label: String,
+    },
     /// Capture is possible in principle but the required helper isn't set up.
     /// `install_hint` is a short, user-facing instruction.
     NotConfigured { install_hint: String },

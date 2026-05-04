@@ -554,6 +554,12 @@ async getModelInfo(modelId: string) : Promise<Result<ModelInfo | null, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Returns the model the app picked as the default for this user's hardware.
+ * Used by the UI to show a one-time "we picked X for you, here's why" banner
+ * after first model download. Stays stable across launches — the choice is
+ * derived from compile-time platform/arch checks plus the model catalog.
+ */
 async getRecommendedModel() : Promise<Result<RecommendedModel, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_recommended_model") };
@@ -661,6 +667,13 @@ async openMicrophonePrivacySettings() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Trigger the macOS "System Audio Recording" TCC prompt by briefly attempting
+ * a Process Tap. The OS adds the app to System Settings → Privacy → System
+ * Audio Recording on first attempt and pops the consent dialog. Falls back to
+ * opening the settings pane if the native bridge isn't available (older macOS,
+ * CLT-only build, or Tahoe still wedged).
+ */
 async requestSystemAudioPermission() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("request_system_audio_permission") };
@@ -817,15 +830,15 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
-async meetingStart(title: string | null) : Promise<Result<number, string>> {
+async meetingStart(title: string | null, isDaily: boolean | null) : Promise<Result<number, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meeting_start", { title }) };
+    return { status: "ok", data: await TAURI_INVOKE("meeting_start", { title, isDaily }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async meetingStop() : Promise<Result<MeetingRecord, string>> {
+async meetingStop() : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_stop") };
 } catch (e) {
@@ -868,6 +881,12 @@ async renameMeeting(id: number, title: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Copy one of a meeting's audio tracks (mic.wav or system.wav) to a path
+ * the user picked via a save-as dialog. Done in Rust so the destination
+ * doesn't have to be inside the app's fs scope (the user may save anywhere).
+ * `track` must be either "mic" or "system".
+ */
 async exportMeetingAudio(id: number, track: string, destination: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("export_meeting_audio", { id, track, destination }) };
@@ -903,11 +922,343 @@ async changeTranscriptionInitialPromptSetting(prompt: string | null) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async changeCloudSyncEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_cloud_sync_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeCloudSyncUrlSetting(url: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_cloud_sync_url_setting", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeCloudSyncApiKeySetting(apiKey: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_cloud_sync_api_key_setting", { apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTranscriptionModeSetting(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_transcription_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudSyncMeeting(meetingId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_sync_meeting", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudTestConnection() : Promise<Result<HealthResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_test_connection") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetActionItems() : Promise<Result<CloudActionItemsResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_action_items") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudUpdateActionItem(itemId: string, status: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_update_action_item", { itemId, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetTranscriptions() : Promise<Result<CloudTranscriptionsResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_transcriptions") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetIntegrationsStatus() : Promise<Result<IntegrationsStatusResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_integrations_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudStartIntegrationOauth(provider: string) : Promise<Result<OAuthConnectResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_start_integration_oauth", { provider }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudDisconnectIntegration(provider: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_disconnect_integration", { provider }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Login with email + password, auto-create API key, and save everything to settings.
+ */
+async cloudLogin(backendUrl: string, email: string, password: string) : Promise<Result<CloudLoginResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_login", { backendUrl, email, password }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Register with email + password + name, auto-create API key, and save everything to settings.
+ */
+async cloudRegister(backendUrl: string, email: string, password: string, fullName: string) : Promise<Result<CloudLoginResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_register", { backendUrl, email, password, fullName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Login with Google OAuth. Opens the system browser, waits for the callback
+ * in a background thread, and emits a GoogleLoginEvent when done.
+ * Returns immediately so the UI doesn't freeze.
+ */
+async cloudLoginGoogle(backendUrl: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_login_google", { backendUrl }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetDailyReports() : Promise<Result<DailyReportsResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_daily_reports") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetNotionDatabases() : Promise<Result<NotionDatabase[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_notion_databases") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetMondayBoards() : Promise<Result<MondayBoard[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_monday_boards") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetNotionStatusOptions(databaseId: string) : Promise<Result<StatusOption[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_notion_status_options", { databaseId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetMondayStatusOptions(boardId: string) : Promise<Result<StatusOption[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_monday_status_options", { boardId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudUpdateIntegrationSettings(values: Partial<{ [key in string]: string }>) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_update_integration_settings", { values }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Login to the Timesheet backend and store the token + credentials in settings.
+ */
+async timesheetLogin(email: string, password: string) : Promise<Result<TimesheetLoginResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_login", { email, password }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Disconnect from Timesheet (clear token from settings).
+ */
+async timesheetDisconnect() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_disconnect") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Check if the stored token is still valid.
+ */
+async timesheetGetStatus() : Promise<Result<TimesheetUser, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_get_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fetch projects from the Timesheet backend, with automatic token renewal on 401.
+ */
+async timesheetGetProjects() : Promise<Result<TimesheetProject[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_get_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save the default project ID in settings.
+ */
+async timesheetSetDefaultProject(projectId: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_set_default_project", { projectId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Create a new time entry, with automatic token renewal on 401.
+ */
+async timesheetCreateEntry(projectId: number, date: string, hours: number, description: string) : Promise<Result<TimesheetEntry, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_create_entry", { projectId, date, hours, description }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fetch a single time entry by ID, with automatic token renewal.
+ */
+async timesheetGetEntry(entryId: number) : Promise<Result<TimesheetEntry, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_get_entry", { entryId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete a time entry by ID, with automatic token renewal.
+ */
+async timesheetDeleteEntry(entryId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_delete_entry", { entryId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Update an existing time entry, with automatic token renewal.
+ */
+async timesheetUpdateEntry(entryId: number, projectId: number, date: string, hours: number, description: string) : Promise<Result<TimesheetEntry, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_update_entry", { entryId, projectId, date, hours, description }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Get the task→entry mapping from settings.
+ */
+async timesheetGetTaskEntries() : Promise<Result<Partial<{ [key in string]: number }>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_get_task_entries") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save task→entry links into settings (merges with existing).
+ */
+async timesheetSaveTaskEntries(entries: Partial<{ [key in string]: number }>) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_save_task_entries", { entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove a task→entry link from settings.
+ */
+async timesheetRemoveTaskEntry(taskId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_remove_task_entry", { taskId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove all task→entry links that point to a given entry ID.
+ */
+async timesheetRemoveEntryTasks(entryId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_remove_entry_tasks", { entryId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Suggest timesheet fields from task descriptions using the Lezat Scheduling
+ * backend AI. Falls back to the user's local LLM config if cloud is unavailable.
+ */
+async timesheetAiSuggest(taskDescriptions: string[], projectsJson: string) : Promise<Result<TimesheetAiSuggestion, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("timesheet_ai_suggest", { taskDescriptions, projectsJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -923,11 +1274,17 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+cloudSyncEvent: CloudSyncEvent,
+googleLoginEvent: GoogleLoginEvent,
 historyUpdatePayload: HistoryUpdatePayload,
+integrationOAuthEvent: IntegrationOAuthEvent,
 meetingStateEvent: MeetingStateEvent,
 meetingTranscriptChunkEvent: MeetingTranscriptChunkEvent
 }>({
+cloudSyncEvent: "cloud-sync-event",
+googleLoginEvent: "google-login-event",
 historyUpdatePayload: "history-update-payload",
+integrationOAuthEvent: "integration-o-auth-event",
 meetingStateEvent: "meeting-state-event",
 meetingTranscriptChunkEvent: "meeting-transcript-chunk-event"
 })
@@ -942,15 +1299,19 @@ export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding
 /**
  * Meeting Mode: also capture system audio (the other side of a call).
  * Implementation is platform-specific:
- * - macOS : requires BlackHole 2ch installed + used as an extra input
+ * - macOS : CoreAudio Process Tap (zero install, macOS 14.2+)
  * - Windows : WASAPI loopback (zero install)
  * - Linux  : default PulseAudio/PipeWire monitor source
+ * Defaults on so the feature works out-of-the-box — Windows team
+ * members were getting empty meetings because the toggle was hidden
+ * behind a settings panel they hadn't found.
  */
 capture_system_audio?: boolean; 
 /**
  * Meeting Mode: persist the raw audio alongside the transcript so users
- * can replay or re-transcribe with a different model later. Off by
- * default because a 45-min meeting at 16 kHz mono is ~80 MB per source.
+ * can replay or re-transcribe with a different model later. ~80 MB for
+ * a 45-minute single-source meeting at 16 kHz mono — small enough to
+ * default on so users always have the option of going back to the audio.
  */
 save_meeting_audio?: boolean; 
 /**
@@ -962,15 +1323,72 @@ save_meeting_audio?: boolean;
  * low-frequency terms. Combined with `custom_words` (which is also
  * used as a prompt) when both are set.
  */
-transcription_initial_prompt?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number }
+transcription_initial_prompt?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number; 
+/**
+ * URL of the Lezat Scheduling backend (e.g. https://scheduling-lezat-backend-production.up.railway.app)
+ */
+cloud_sync_url?: string | null; 
+/**
+ * API key for authenticating with the web backend. Generated in the web dashboard.
+ */
+cloud_sync_api_key?: string | null; 
+/**
+ * Automatically send meeting transcriptions to the web backend when a meeting ends.
+ */
+cloud_sync_enabled?: boolean; 
+/**
+ * Transcription mode: Cloud uses the Lezat backend for ASR (primary),
+ * Local uses the on-device Whisper/Parakeet model (fallback).
+ */
+transcription_mode?: TranscriptionMode; 
+/**
+ * Unique device identifier, generated once per install. Used to create globally unique meeting IDs.
+ */
+device_id?: string; 
+/**
+ * URL of the Lezat Timesheet backend (e.g. https://timesheet.back.lezat.tech)
+ */
+timesheet_url?: string; 
+/**
+ * Bearer token for authenticating with the Timesheet backend.
+ */
+timesheet_token?: string | null; 
+/**
+ * Email of the authenticated timesheet user (display only).
+ */
+timesheet_email?: string | null; 
+/**
+ * Stored password for automatic token renewal (no refresh-token API).
+ */
+timesheet_password?: string | null; 
+/**
+ * Default project ID to use when creating time entries.
+ */
+timesheet_default_project_id?: number | null; 
+/**
+ * Mapping of cloud action-item ID → timesheet entry ID.
+ * Used to track which tasks have already been logged.
+ */
+timesheet_task_entries?: Partial<{ [key in string]: number }> }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+export type CloudActionItem = { id: string; meeting_id: string | null; meeting_title: string | null; description: string | null; assignee: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null }
+export type CloudActionItemsResponse = { items: CloudActionItem[] }
+export type CloudLoginResult = { user_email: string; user_name: string; api_key: string }
+export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state: "success"; meeting_id: number; remote_id: string } | { state: "failed"; meeting_id: number; error: string }
+export type CloudTranscription = { id: string; provider: string; meeting_id: string | null; meeting_title: string | null; meeting_platform: string | null; transcript_text_available: boolean; transcript_text: string | null; participant_count: number | null; received_at: string }
+export type CloudTranscriptionsResponse = { items: CloudTranscription[] }
+export type CompletedTask = { description: string; source_sentence: string | null }
 export type CustomSounds = { start: boolean; stop: boolean }
+export type DailyReport = { id: string; meeting_id: string | null; meeting_title: string | null; meeting_date: string | null; person_reports?: PersonDailyReport[]; created_at: string | null }
+export type DailyReportsResponse = { reports: DailyReport[] }
 export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+export type GoogleLoginEvent = { state: "success"; user_email: string; user_name: string } | { state: "failed"; error: string }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+export type HealthResponse = { status: string; user_email: string | null }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
@@ -981,6 +1399,10 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+export type IntegrationConfig = { database_id: string | null; database_name: string | null; board_id: string | null; board_name: string | null; calendar_id: string | null; todo_status: string | null }
+export type IntegrationOAuthEvent = { state: "success"; provider: string } | { state: "failed"; provider: string; error: string }
+export type IntegrationStatus = { provider: string; connected: boolean; workspace: string | null; account_name: string | null; config: IntegrationConfig | null }
+export type IntegrationsStatusResponse = { integrations: IntegrationStatus[] }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
@@ -993,24 +1415,43 @@ offset_ms: number;
  * "mic" or "system" (second reserved for dual-stream work)
  */
 source: string; text: string }
-export type MeetingRecord = { id: number; started_at: number; ended_at: number | null; title: string; duration_ms: number; transcript_text: string; chunks: MeetingChunk[]; audio_path: string | null }
+export type MeetingRecord = { id: number; started_at: number; ended_at: number | null; title: string; duration_ms: number; transcript_text: string; chunks: MeetingChunk[]; audio_path: string | null; is_daily?: boolean }
 export type MeetingStateEvent = { state: "started"; meeting_id: number; title: string } | { state: "stopped"; meeting_id: number } | { state: "error"; meeting_id: number | null; message: string }
 export type MeetingTranscriptChunkEvent = { meeting_id: number; chunk: MeetingChunk }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
-export type RecommendedModel = { model_id: string; model_name: string; size_mb: number; reason: string }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+export type MondayBoard = { id: string; name: string }
+export type NotionDatabase = { id: string; name: string }
+export type OAuthConnectResponse = { oauth_url: string; state: string | null }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "none" | "top" | "bottom"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
+export type PersonDailyReport = { speaker_name: string; speaker_email: string | null; completed_tasks?: CompletedTask[] }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+export type RecommendedModel = { model_id: string; model_name: string; size_mb: number; reason: string }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+export type StatusOption = { name: string; color?: string }
 export type SystemAudioAvailability = { state: "available"; label: string } | { state: "not_configured"; install_hint: string } | { state: "not_yet_supported"; message: string }
+export type TimesheetAiSuggestion = { project_id: number | null; hours: number | null; description: string | null }
+export type TimesheetEntry = { id: number; project_id: number; date: string; hours: string; description: string; user_id: number; status: string; created_at: string; updated_at: string }
+export type TimesheetLoginResponse = { access_token: string; token_type: string; user: TimesheetUser | null }
+export type TimesheetProject = { id: number; name: string; client_name: string; status: string | null }
+export type TimesheetUser = { id: string; email: string; full_name: string; role?: string | null }
+export type TranscriptionMode = 
+/**
+ * Use cloud transcription (Lezat backend) as primary; fall back to local on failure.
+ */
+"cloud" | 
+/**
+ * Always use on-device model (original behavior).
+ */
+"local"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type WhisperAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }

@@ -29,6 +29,7 @@ dist-ssr
 .claude/
 
 /target/
+src-tauri/.cargo/
 recording_*
 .crush/
 

@@ -157,6 +157,23 @@ function App() {
     };
   }, [t]);
 
+  // Global listener for cloud sync completion — shows toast regardless of active page.
+  useEffect(() => {
+    const unlisten = listen<{ state: string; error?: string }>(
+      "cloud-sync-event",
+      (evt) => {
+        if (evt.payload.state === "success") {
+          toast.success("Meeting synced successfully");
+        } else if (evt.payload.state === "failed") {
+          toast.error(`Sync failed: ${evt.payload.error ?? "unknown error"}`);
+        }
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const revealMainWindowForPermissions = async () => {
     try {
       await commands.showMainWindowCommand();
@@ -167,13 +184,18 @@ function App() {
 
   const checkOnboardingStatus = async () => {
     try {
-      // Check if they have any models available
+      // Check if they have any models available OR cloud transcription is configured
       const result = await commands.hasAnyModelsAvailable();
       const hasModels = result.status === "ok" && result.data;
+      const appSettings = await commands.getAppSettings();
+      const hasCloud =
+        appSettings.status === "ok" &&
+        !!(appSettings.data as Record<string, unknown>)?.cloud_sync_url &&
+        !!(appSettings.data as Record<string, unknown>)?.cloud_sync_api_key;
       const currentPlatform = platform();
 
-      if (hasModels) {
-        // Returning user - check if they need to grant permissions first
+      if (hasModels || hasCloud) {
+        // Returning user or cloud configured - check if they need to grant permissions first
         setIsReturningUser(true);
 
         if (currentPlatform === "macos") {

@@ -1,7 +1,9 @@
 pub mod audio;
+pub mod cloud_sync;
 pub mod history;
 pub mod meetings;
 pub mod models;
+pub mod timesheet;
 pub mod transcription;
 
 use crate::settings::{get_settings, write_settings, AppSettings, LogLevel};

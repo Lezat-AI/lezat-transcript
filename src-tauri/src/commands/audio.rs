@@ -163,12 +163,10 @@ pub fn request_system_audio_permission() -> Result<(), String> {
             native_system_audio_supported, MacosNativeAudioRecorder,
         };
         if !native_system_audio_supported() {
-            return Err(
-                "Native system-audio bridge unavailable on this macOS build".to_string(),
-            );
+            return Err("Native system-audio bridge unavailable on this macOS build".to_string());
         }
-        let mut recorder = MacosNativeAudioRecorder::new()
-            .map_err(|e| format!("recorder init failed: {e}"))?;
+        let mut recorder =
+            MacosNativeAudioRecorder::new().map_err(|e| format!("recorder init failed: {e}"))?;
         // open() actually creates the Process Tap, which triggers the TCC
         // prompt the first time and registers the app in the System Settings
         // list either way. close() tears it back down — we don't need samples.

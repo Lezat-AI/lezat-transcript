@@ -155,6 +155,15 @@ const settingUpdaters: {
     commands.changeWhisperGpuDevice(value as number),
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
+  // Cloud sync settings — commands will exist in bindings.ts after Rust backend compiles.
+  cloud_sync_enabled: (value) =>
+    (commands as any).changeCloudSyncEnabledSetting(value as boolean),
+  cloud_sync_url: (value) =>
+    (commands as any).changeCloudSyncUrlSetting(value as string | null),
+  cloud_sync_api_key: (value) =>
+    (commands as any).changeCloudSyncApiKeySetting(value as string | null),
+  transcription_mode: (value) =>
+    (commands as any).changeTranscriptionModeSetting(value as string),
 };
 
 export const useSettingsStore = create<SettingsStore>()(
