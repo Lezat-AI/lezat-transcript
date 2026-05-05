@@ -19,7 +19,7 @@
     "debug": "Debug",
     "about": "About",
     "acknowledgments": "Acknowledgments",
-    "cloudSync": "Cloud Sync",
+    "cloudSync": "My Account",
     "actionItems": "Meeting Tasks",
     "integrations": "Integrations"
   },
@@ -558,8 +558,8 @@
     "cloudSync": {
       "title": "Lezat Scheduling",
       "onboarding": {
-        "title": "Connect to Lezat Scheduling",
-        "subtitle": "Sign in to automatically sync your meeting transcriptions, extract action items, and push them to your team's tools."
+        "title": "Sign in to unlock all features",
+        "subtitle": "Create your free account or sign in to automatically sync transcriptions, extract action items with AI, and connect your team's tools — all included."
       },
       "features": {
         "sync": {
@@ -684,8 +684,8 @@
   },
   "actionItems": {
     "title": "Meeting Tasks",
-    "notConfigured": "Cloud Sync not configured",
-    "configureHint": "Set up Cloud Sync in the Cloud Sync settings to see action items from your meetings",
+    "notConfigured": "Account required",
+    "configureHint": "Sign in or create your free account in My Account to see action items from your meetings",
     "empty": "No action items yet. They will appear here after your meetings are transcribed.",
     "retry": "Try Again",
     "refresh": "Refresh",
@@ -706,13 +706,26 @@
       "addToTimesheet": "Add to timesheet",
       "selectGroup": "Select all pending in this meeting"
     },
+    "review": {
+      "title": "Review before approving",
+      "subtitle": "Review and edit the details of the {{count}} selected tasks before confirming.",
+      "description": "Description",
+      "assignee": "Assignee",
+      "dueDate": "Due date",
+      "meeting": "Meeting",
+      "cancel": "Cancel",
+      "confirm": "Confirm & Approve",
+      "confirming": "Approving...",
+      "noDescription": "No description",
+      "dateRequired": "{{count}} task(s) need a due date to sync to calendar"
+    },
     "previousTask": "Previous task",
     "loadMore": "Show more meetings ({{remaining}} remaining)"
   },
   "integrations": {
     "title": "Integrations",
-    "notConfigured": "Cloud Sync not configured",
-    "configureHint": "Set up Cloud Sync in the Cloud Sync settings to manage your integrations",
+    "notConfigured": "Account required",
+    "configureHint": "Sign in or create your free account in My Account to manage your integrations",
     "connected": "Connected",
     "disconnected": "Not connected",
     "connect": "Connect",

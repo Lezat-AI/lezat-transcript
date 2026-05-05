@@ -13,6 +13,7 @@ import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import Footer from "./components/footer";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
+import MeetingsPage from "./components/meetings/MeetingsPage";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
@@ -23,6 +24,9 @@ type OnboardingStep = "accessibility" | "model" | "done";
 const renderSettingsContent = (section: SidebarSection) => {
   const ActiveComponent =
     SECTIONS_CONFIG[section]?.component || SECTIONS_CONFIG.general.component;
+  // MeetingsPage is always rendered (hidden when inactive) so an active
+  // meeting keeps its event listeners, live transcript chunks, and timer.
+  if (section === "meetings") return null;
   return <ActiveComponent />;
 };
 
@@ -297,6 +301,11 @@ function App() {
           <div className="flex-1 overflow-y-auto">
             <div className="flex flex-col items-center p-4 gap-4">
               <AccessibilityPermissions />
+              {/* MeetingsPage stays mounted (hidden) so active meetings
+                  keep their event listeners, live chunks, and timer. */}
+              <div className={currentSection === "meetings" ? "w-full max-w-3xl" : "hidden"}>
+                <MeetingsPage />
+              </div>
               {renderSettingsContent(currentSection)}
             </div>
           </div>

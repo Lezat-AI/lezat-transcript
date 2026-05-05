@@ -410,8 +410,13 @@ pub fn fetch_action_items(settings: &AppSettings) -> Result<CloudActionItemsResp
     })
 }
 
-/// Update an action item's status on the backend.
-pub fn update_action_item(settings: &AppSettings, item_id: &str, status: &str) -> Result<()> {
+/// Update an action item's status (and optionally other fields) on the backend.
+pub fn update_action_item(
+    settings: &AppSettings,
+    item_id: &str,
+    status: &str,
+    edits: Option<serde_json::Value>,
+) -> Result<()> {
     let url = format!(
         "{}/api/desktop/action-items/{}",
         base_url(settings)?,
@@ -420,10 +425,19 @@ pub fn update_action_item(settings: &AppSettings, item_id: &str, status: &str) -
     let key = api_key(settings)?;
     let client = build_client()?;
 
+    let mut body = serde_json::json!({ "status": status });
+    if let Some(extra) = edits {
+        if let (Some(base), Some(obj)) = (body.as_object_mut(), extra.as_object()) {
+            for (k, v) in obj {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
     let resp = client
         .patch(&url)
         .header("X-API-Key", key)
-        .json(&serde_json::json!({ "status": status }))
+        .json(&body)
         .send()
         .map_err(|e| anyhow!("Network error: {e}"))?;
 

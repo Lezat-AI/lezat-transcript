@@ -534,23 +534,88 @@ function TimesheetDialog({
 function BulkApprovalBar({
   selectedCount,
   hasPreviousTasks,
-  integrations,
-  config,
   onApprove,
   onAddToTimesheet,
   onClear,
 }: {
   selectedCount: number;
   hasPreviousTasks: boolean;
-  integrations: IntegrationInfo[];
-  config: PreloadedConfig;
-  onApprove: (settings: Record<string, string>) => void;
+  onApprove: () => void;
   onAddToTimesheet: () => void;
   onClear: () => void;
 }) {
   const { t } = useTranslation();
-  const connected = integrations.filter((i) => i.connected && i.provider !== "read-ai");
 
+  return (
+    <div className="sticky bottom-0 border-t border-mid-gray/20 bg-background/95 backdrop-blur-sm px-6 py-3 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold">
+          {t("actionItems.bulk.selected", { count: selectedCount })}
+        </p>
+        <button onClick={onClear} className="text-[11px] text-mid-gray hover:text-red-500 transition-colors">
+          {t("actionItems.bulk.clear")}
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2 justify-end">
+        {hasPreviousTasks && (
+          <button
+            onClick={onAddToTimesheet}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg border border-blue-500/30 text-blue-500 hover:bg-blue-500/10 transition-colors"
+          >
+            <CheckCircle2 className="w-3 h-3" />
+            {t("actionItems.bulk.addToTimesheet")}
+          </button>
+        )}
+        <button
+          onClick={onApprove}
+          className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-lezat-sage text-[#0d0d1a] hover:bg-lezat-sage/80 transition-colors"
+        >
+          <Send className="w-3 h-3" />
+          {t("actionItems.bulk.approve", { count: selectedCount })}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Approval Review Modal ────────────────────────────────────────
+
+interface EditableItem {
+  id: string;
+  description: string;
+  assignee: string;
+  due_date: string;
+  meeting_title: string;
+}
+
+function ApprovalReviewModal({
+  items,
+  integrations,
+  config,
+  onConfirm,
+  onClose,
+}: {
+  items: CloudActionItem[];
+  integrations: IntegrationInfo[];
+  config: PreloadedConfig;
+  onConfirm: (edits: Record<string, { description?: string; assignee?: string; due_date?: string }>, integrationSettings: Record<string, string>, syncTargets: string[]) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [editableItems, setEditableItems] = useState<EditableItem[]>(() =>
+    items.map((i) => ({
+      id: i.id,
+      description: i.description ?? "",
+      assignee: i.assignee ?? "",
+      due_date: i.due_date ?? "",
+      meeting_title: i.meeting_title ?? t("actionItems.untitledMeeting"),
+    })),
+  );
+  const [submitting, setSubmitting] = useState(false);
+
+  // Integration targets (same as BulkApprovalBar)
+  const connected = integrations.filter((i) => i.connected && !["read-ai", "monday", "fireflies"].includes(i.provider));
   const [targets, setTargets] = useState<Set<string>>(() => new Set(connected.map((i) => i.provider)));
   const [notionDbId, setNotionDbId] = useState(
     integrations.find((i) => i.provider === "notion")?.config?.database_id ?? "",
@@ -558,15 +623,7 @@ function BulkApprovalBar({
   const [notionStatus, setNotionStatus] = useState(
     integrations.find((i) => i.provider === "notion")?.config?.todo_status ?? "",
   );
-  const [mondayBoardId, setMondayBoardId] = useState(
-    integrations.find((i) => i.provider === "monday")?.config?.board_id ?? "",
-  );
-  const [mondayStatus, setMondayStatus] = useState(
-    integrations.find((i) => i.provider === "monday")?.config?.todo_status ?? "",
-  );
-  const [sending, setSending] = useState(false);
 
-  // Fetch statuses when database/board changes
   useEffect(() => {
     if (notionDbId && !config.notionStatuses[notionDbId]) {
       (commands as any).cloudGetNotionStatusOptions(notionDbId).then((r: any) => {
@@ -577,126 +634,209 @@ function BulkApprovalBar({
     }
   }, [notionDbId, config]);
 
-  useEffect(() => {
-    if (mondayBoardId && !config.mondayStatuses[mondayBoardId]) {
-      (commands as any).cloudGetMondayStatusOptions(mondayBoardId).then((r: any) => {
-        if (r.status === "ok") {
-          config.mondayStatuses[mondayBoardId] = r.data.map((o: any) => ({ id: o.name, name: o.name }));
-        }
-      }).catch(() => {});
-    }
-  }, [mondayBoardId, config]);
-
   const notionStatusOpts = config.notionStatuses[notionDbId] ?? [];
-  const mondayStatusOpts = config.mondayStatuses[mondayBoardId] ?? [];
 
-  const toggle = (p: string) => setTargets((prev) => {
+  const toggleTarget = (p: string) => setTargets((prev) => {
     const n = new Set(prev);
     if (n.has(p)) n.delete(p); else n.add(p);
     return n;
   });
 
-  const handleApprove = () => {
-    setSending(true);
-    const s: Record<string, string> = {};
+  const updateItem = (id: string, field: keyof Omit<EditableItem, "id" | "meeting_title">, value: string) => {
+    setEditableItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
+    );
+  };
+
+  const handleConfirm = () => {
+    setSubmitting(true);
+    const edits: Record<string, { description?: string; assignee?: string; due_date?: string }> = {};
+    for (const edited of editableItems) {
+      const original = items.find((i) => i.id === edited.id);
+      if (!original) continue;
+      const changed: { description?: string; assignee?: string; due_date?: string } = {};
+      if (edited.description !== (original.description ?? "")) changed.description = edited.description;
+      if (edited.assignee !== (original.assignee ?? "")) changed.assignee = edited.assignee;
+      if (edited.due_date !== (original.due_date ?? "")) changed.due_date = edited.due_date;
+      if (Object.keys(changed).length > 0) edits[edited.id] = changed;
+    }
+    const integrationSettings: Record<string, string> = {};
     if (targets.has("notion")) {
-      if (notionDbId) s["NOTION_TASKS_DATABASE_ID"] = notionDbId;
-      if (notionStatus) s["NOTION_KANBAN_TODO_STATUS"] = notionStatus;
+      if (notionDbId) integrationSettings["NOTION_TASKS_DATABASE_ID"] = notionDbId;
+      if (notionStatus) integrationSettings["NOTION_KANBAN_TODO_STATUS"] = notionStatus;
     }
-    if (targets.has("monday")) {
-      if (mondayBoardId) s["MONDAY_BOARD_ID"] = mondayBoardId;
-      if (mondayStatus) s["MONDAY_KANBAN_TODO_STATUS"] = mondayStatus;
-    }
-    onApprove(s);
+    onConfirm(edits, integrationSettings, Array.from(targets));
   };
 
   const LABELS: Record<string, string> = {
-    notion: "Notion", monday: "Monday.com",
-    "google-calendar": "Google Calendar", "outlook-calendar": "Outlook",
+    notion: "Notion",
+    "google-calendar": "Google Calendar",
+    "outlook-calendar": "Outlook",
   };
 
+  const CALENDAR_PROVIDERS = ["google-calendar", "outlook-calendar"];
+  const requiresDate = CALENDAR_PROVIDERS.some((p) => targets.has(p));
+  const itemsMissingDate = requiresDate
+    ? editableItems.filter((i) => !i.due_date).map((i) => i.id)
+    : [];
+
+  // Group editable items by meeting
+  const groupedByMeeting = useMemo(() => {
+    const map = new Map<string, EditableItem[]>();
+    for (const item of editableItems) {
+      const key = item.meeting_title;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    }
+    return Array.from(map.entries());
+  }, [editableItems]);
+
   return (
-    <div className="sticky bottom-0 border-t border-mid-gray/20 bg-background/95 backdrop-blur-sm px-6 py-3 flex flex-col gap-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold">
-          {t("actionItems.bulk.selected", { count: selectedCount })}
-        </p>
-        <button onClick={onClear} className="text-[11px] text-mid-gray hover:text-red-500 transition-colors">
-          {t("actionItems.bulk.clear")}
-        </button>
-      </div>
-
-      {/* Integrations row */}
-      <div className="flex flex-wrap items-start gap-4">
-        {connected.map((integration) => {
-          const checked = targets.has(integration.provider);
-          const isNotion = integration.provider === "notion" && checked;
-          const isMonday = integration.provider === "monday" && checked;
-
-          return (
-            <div key={integration.provider} className="flex flex-col gap-1">
-              <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                <input type="checkbox" checked={checked} onChange={() => toggle(integration.provider)} className="accent-lezat-sage" />
-                <span className="text-[11px] font-medium">{LABELS[integration.provider] ?? integration.provider}</span>
-              </label>
-
-              {isNotion && (
-                <div className="flex items-center gap-1.5 ml-5">
-                  <select value={notionDbId} onChange={(e) => setNotionDbId(e.target.value)}
-                    className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[140px]">
-                    <option value="">—</option>
-                    {config.notionDbs.map((db) => <option key={db.id} value={db.id}>{db.name}</option>)}
-                  </select>
-                  {notionStatusOpts.length > 0 && (
-                    <select value={notionStatus} onChange={(e) => setNotionStatus(e.target.value)}
-                      className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[120px]">
-                      <option value="">—</option>
-                      {notionStatusOpts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  )}
-                </div>
-              )}
-
-              {isMonday && (
-                <div className="flex items-center gap-1.5 ml-5">
-                  <select value={mondayBoardId} onChange={(e) => setMondayBoardId(e.target.value)}
-                    className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[140px]">
-                    <option value="">—</option>
-                    {config.mondayBoards.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                  {mondayStatusOpts.length > 0 && (
-                    <select value={mondayStatus} onChange={(e) => setMondayStatus(e.target.value)}
-                      className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[120px]">
-                      <option value="">—</option>
-                      {mondayStatusOpts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        <div className="ml-auto flex items-center gap-2 self-end">
-          {hasPreviousTasks && (
-            <button
-              onClick={onAddToTimesheet}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg border border-blue-500/30 text-blue-500 hover:bg-blue-500/10 transition-colors"
-            >
-              <CheckCircle2 className="w-3 h-3" />
-              {t("actionItems.bulk.addToTimesheet")}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-background rounded-xl shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[85vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 pt-5 pb-3 border-b border-mid-gray/20">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-semibold">{t("actionItems.review.title")}</h3>
+            <button onClick={onClose} className="p-1 rounded hover:bg-mid-gray/10">
+              <X className="w-4 h-4" />
             </button>
+          </div>
+          <p className="text-xs text-mid-gray mt-1">
+            {t("actionItems.review.subtitle", { count: items.length })}
+          </p>
+        </div>
+
+        {/* Scrollable items list */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4">
+          {groupedByMeeting.map(([meetingTitle, meetingItems]) => (
+            <div key={meetingTitle}>
+              <div className="flex items-center gap-2 mb-2">
+                <Video className="w-3.5 h-3.5 text-mid-gray" />
+                <span className="text-xs font-medium text-mid-gray">{meetingTitle}</span>
+              </div>
+              <div className="flex flex-col gap-3">
+                {meetingItems.map((item) => (
+                  <div key={item.id} className="rounded-lg border border-mid-gray/15 p-3 flex flex-col gap-2">
+                    {/* Description */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
+                        {t("actionItems.review.description")}
+                      </label>
+                      <textarea
+                        value={item.description}
+                        onChange={(e) => updateItem(item.id, "description", e.target.value)}
+                        rows={2}
+                        className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-transparent resize-none focus:outline-none focus:border-lezat-sage/50"
+                        placeholder={t("actionItems.review.noDescription")}
+                      />
+                    </div>
+                    {/* Assignee + Due Date in a row */}
+                    <div className="flex gap-3">
+                      <div className="flex-1 flex flex-col gap-1">
+                        <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
+                          {t("actionItems.review.assignee")}
+                        </label>
+                        <input
+                          type="text"
+                          value={item.assignee}
+                          onChange={(e) => updateItem(item.id, "assignee", e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-transparent focus:outline-none focus:border-lezat-sage/50"
+                        />
+                      </div>
+                      <div className="flex-1 flex flex-col gap-1">
+                        <label className={`text-[10px] font-medium uppercase tracking-wide ${
+                          itemsMissingDate.includes(item.id) ? "text-red-500" : "text-mid-gray"
+                        }`}>
+                          {t("actionItems.review.dueDate")}
+                          {itemsMissingDate.includes(item.id) && " *"}
+                        </label>
+                        <input
+                          type="date"
+                          value={item.due_date}
+                          onChange={(e) => updateItem(item.id, "due_date", e.target.value)}
+                          className={`w-full px-2.5 py-1.5 text-sm rounded-md border bg-transparent focus:outline-none ${
+                            itemsMissingDate.includes(item.id)
+                              ? "border-red-500/50 focus:border-red-500"
+                              : "border-mid-gray/15 focus:border-lezat-sage/50"
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer with integration targets + confirm */}
+        <div className="px-6 py-4 border-t border-mid-gray/20 flex flex-col gap-3">
+          {/* Integration checkboxes */}
+          {connected.length > 0 && (
+            <div className="flex flex-wrap items-start gap-4">
+              {connected.map((integration) => {
+                const checked = targets.has(integration.provider);
+                const isNotion = integration.provider === "notion" && checked;
+                return (
+                  <div key={integration.provider} className="flex flex-col gap-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" checked={checked} onChange={() => toggleTarget(integration.provider)} className="accent-lezat-sage" />
+                      <span className="text-[11px] font-medium">{LABELS[integration.provider] ?? integration.provider}</span>
+                    </label>
+                    {isNotion && (
+                      <div className="flex items-center gap-1.5 ml-5">
+                        <select value={notionDbId} onChange={(e) => setNotionDbId(e.target.value)}
+                          className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[140px]">
+                          <option value="">—</option>
+                          {config.notionDbs.map((db) => <option key={db.id} value={db.id}>{db.name}</option>)}
+                        </select>
+                        {notionStatusOpts.length > 0 && (
+                          <select value={notionStatus} onChange={(e) => setNotionStatus(e.target.value)}
+                            className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[120px]">
+                            <option value="">—</option>
+                            {notionStatusOpts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
-          {/* Approve button */}
-          <button
-            onClick={handleApprove}
-            disabled={sending || targets.size === 0}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-lezat-sage text-[#0d0d1a] hover:bg-lezat-sage/80 disabled:opacity-50 transition-colors"
-          >
-            {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-            {t("actionItems.bulk.approve", { count: selectedCount })}
-          </button>
+
+          {/* Date required warning */}
+          {itemsMissingDate.length > 0 && (
+            <p className="text-[11px] text-red-500 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {t("actionItems.review.dateRequired", { count: itemsMissingDate.length })}
+            </p>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-1.5 text-xs font-medium rounded-lg border border-mid-gray/20 hover:bg-mid-gray/10 transition-colors"
+            >
+              {t("actionItems.review.cancel")}
+            </button>
+            <button
+              onClick={handleConfirm}
+              disabled={submitting || targets.size === 0 || itemsMissingDate.length > 0}
+              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-lezat-sage text-[#0d0d1a] hover:bg-lezat-sage/80 disabled:opacity-50 transition-colors"
+            >
+              {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+              {submitting
+                ? t("actionItems.review.confirming")
+                : t("actionItems.review.confirm")
+              }
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -906,6 +1046,7 @@ export const ActionItemsPage: React.FC = () => {
     taskIds: string[];
     editEntryId?: number;
   } | null>(null);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
 
   // Pre-loaded config (fetched once on mount, shared with all panels)
   const [preloaded, setPreloaded] = useState<PreloadedConfig>({
@@ -947,7 +1088,6 @@ export const ActionItemsPage: React.FC = () => {
     const cfg: PreloadedConfig = { notionDbs: [], mondayBoards: [], notionStatuses: {}, mondayStatuses: {} };
 
     const notion = integrations.find((i) => i.provider === "notion" && i.connected);
-    const monday = integrations.find((i) => i.provider === "monday" && i.connected);
 
     const promises: Promise<void>[] = [];
     if (notion) {
@@ -961,21 +1101,6 @@ export const ActionItemsPage: React.FC = () => {
         promises.push(
           (commands as any).cloudGetNotionStatusOptions(dbId).then((r: any) => {
             if (r.status === "ok") cfg.notionStatuses[dbId] = r.data.map((o: any) => ({ id: o.name, name: o.name }));
-          }).catch(() => {}),
-        );
-      }
-    }
-    if (monday) {
-      promises.push(
-        (commands as any).cloudGetMondayBoards().then((r: any) => {
-          if (r.status === "ok") cfg.mondayBoards = r.data;
-        }).catch(() => {}),
-      );
-      const boardId = monday.config?.board_id;
-      if (boardId) {
-        promises.push(
-          (commands as any).cloudGetMondayStatusOptions(boardId).then((r: any) => {
-            if (r.status === "ok") cfg.mondayStatuses[boardId] = r.data.map((o: any) => ({ id: o.name, name: o.name }));
           }).catch(() => {}),
         );
       }
@@ -1061,20 +1186,59 @@ export const ActionItemsPage: React.FC = () => {
 
   // ── Approve helpers ──
 
-  const handleBulkApprove = async (settingsUpdate: Record<string, string>) => {
-    if (Object.keys(settingsUpdate).length > 0) {
-      try { await (commands as any).cloudUpdateIntegrationSettings(settingsUpdate); } catch { /* */ }
+  const handleOpenReviewModal = () => {
+    setReviewModalOpen(true);
+  };
+
+  const handleReviewConfirm = async (
+    edits: Record<string, { description?: string; assignee?: string; due_date?: string }>,
+    integrationSettings: Record<string, string>,
+    syncTargets: string[],
+  ) => {
+    if (Object.keys(integrationSettings).length > 0) {
+      try {
+        await (commands as any).cloudUpdateIntegrationSettings(integrationSettings);
+      } catch (e) {
+        console.warn("cloudUpdateIntegrationSettings failed:", e);
+      }
     }
     const ids = Array.from(selected);
     const results = await Promise.allSettled(
-      ids.map((id) => (commands as any).cloudUpdateActionItem(id, "completed")),
+      ids.map((id) => {
+        const itemEdits = edits[id] ?? {};
+        // Include sync_targets so the backend knows which integrations to push to
+        const payload = { ...itemEdits, sync_targets: syncTargets };
+        return (commands as any).cloudUpdateActionItem(id, "completed", JSON.stringify(payload));
+      }),
     );
     const succeeded = new Set<string>();
+    const errors: string[] = [];
     results.forEach((r, i) => {
-      if (r.status === "fulfilled" && (r.value as any).status === "ok") succeeded.add(ids[i]);
+      if (r.status === "fulfilled" && (r.value as any).status === "ok") {
+        succeeded.add(ids[i]);
+      } else {
+        const errMsg = r.status === "rejected" ? String(r.reason) : (r.value as any).error;
+        if (errMsg) errors.push(errMsg);
+      }
     });
-    setItems((prev) => prev.map((i) => succeeded.has(i.id) ? { ...i, status: "completed" } : i));
+    if (errors.length > 0) {
+      console.warn("Some action items failed to approve:", errors);
+      setError(errors[0]);
+    }
+    // Update local items with edits + status change
+    setItems((prev) => prev.map((i) => {
+      if (!succeeded.has(i.id)) return i;
+      const itemEdits = edits[i.id];
+      return {
+        ...i,
+        status: "completed",
+        ...(itemEdits?.description != null ? { description: itemEdits.description } : {}),
+        ...(itemEdits?.assignee != null ? { assignee: itemEdits.assignee } : {}),
+        ...(itemEdits?.due_date != null ? { due_date: itemEdits.due_date } : {}),
+      };
+    }));
     setSelected(new Set());
+    setReviewModalOpen(false);
   };
 
   const handleUnapprove = async (item: CloudActionItem) => {
@@ -1230,11 +1394,20 @@ export const ActionItemsPage: React.FC = () => {
         <BulkApprovalBar
           selectedCount={selected.size}
           hasPreviousTasks={items.some((i) => selected.has(i.id) && i.task_type === "completed_previous")}
-          integrations={integrations}
-          config={preloaded}
-          onApprove={handleBulkApprove}
+          onApprove={handleOpenReviewModal}
           onAddToTimesheet={openTimesheetCreate}
           onClear={() => setSelected(new Set())}
+        />
+      )}
+
+      {/* Approval review modal */}
+      {reviewModalOpen && selected.size > 0 && (
+        <ApprovalReviewModal
+          items={items.filter((i) => selected.has(i.id))}
+          integrations={integrations}
+          config={preloaded}
+          onConfirm={handleReviewConfirm}
+          onClose={() => setReviewModalOpen(false)}
         />
       )}
 

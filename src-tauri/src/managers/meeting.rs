@@ -37,10 +37,18 @@ use crate::audio_toolkit::system_audio::{
 };
 #[cfg(target_os = "windows")]
 use crate::audio_toolkit::wasapi_loopback::WasapiLoopbackRecorder;
-use crate::audio_toolkit::{list_input_devices, AudioRecorder};
+use crate::audio_toolkit::{list_input_devices, AudioRecorder, SileroVad, VoiceActivityDetector};
 use crate::managers::transcription::TranscriptionManager;
 use crate::portable;
 use crate::settings::get_settings;
+
+/// Minimum fraction of 30-ms frames that must contain speech for a chunk to be
+/// worth transcribing.  Chunks below this are almost certainly silence/noise
+/// and would only produce Whisper hallucinations.
+const MIN_SPEECH_RATIO: f32 = 0.05;
+
+/// Frame size for Silero VAD: 30 ms at 16 kHz = 480 samples.
+const VAD_FRAME_SAMPLES: usize = 480;
 
 /// A per-source capture backend. Unified `start/stop/close` surface so the
 /// meeting recording loop doesn't care whether samples come from cpal or
@@ -699,6 +707,54 @@ fn spawn_recording_loop(
     Ok(handle)
 }
 
+/// Returns the fraction of 30-ms frames in `samples` that Silero classifies as
+/// speech.  If the VAD model cannot be loaded, returns 1.0 (assume speech) so
+/// transcription proceeds as a fallback.
+fn speech_ratio(app: &AppHandle, samples: &[f32]) -> f32 {
+    if samples.len() < VAD_FRAME_SAMPLES {
+        return 0.0;
+    }
+
+    let vad_path = match app
+        .path()
+        .resolve(
+            "resources/models/silero_vad_v4.onnx",
+            tauri::path::BaseDirectory::Resource,
+        ) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Could not resolve VAD model path: {e}");
+            return 1.0;
+        }
+    };
+
+    let mut vad = match SileroVad::new(&vad_path, 0.3) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Could not create SileroVad for meeting chunk: {e}");
+            return 1.0;
+        }
+    };
+
+    let mut speech_frames: usize = 0;
+    let mut total_frames: usize = 0;
+
+    for frame in samples.chunks_exact(VAD_FRAME_SAMPLES) {
+        total_frames += 1;
+        match vad.is_voice(frame) {
+            Ok(true) => speech_frames += 1,
+            Ok(false) => {}
+            Err(_) => {}
+        }
+    }
+
+    if total_frames == 0 {
+        return 0.0;
+    }
+
+    speech_frames as f32 / total_frames as f32
+}
+
 fn run_recording_loop(
     app: &AppHandle,
     store: &Arc<MeetingsStore>,
@@ -797,6 +853,20 @@ fn run_recording_loop(
                 "Meeting {meeting_id} [{source}]: stop requested, skipping final chunk transcription"
             );
             break;
+        }
+
+        // Run VAD on the chunk to avoid sending silence to Whisper, which
+        // causes hallucinations (e.g. "Thank you for watching!", YouTube
+        // intros, etc.).
+        let ratio = speech_ratio(app, &samples);
+        if ratio < MIN_SPEECH_RATIO {
+            debug!(
+                "Meeting {meeting_id} [{source}]: skipping silent chunk (speech ratio {ratio:.2})"
+            );
+            if !stop_flag.load(Ordering::SeqCst) {
+                thread::sleep(CHUNK_ROLLOVER_PAUSE);
+            }
+            continue;
         }
 
         // Transcribe on THIS thread (one chunk at a time per source). The

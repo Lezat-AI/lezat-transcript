@@ -145,6 +145,7 @@ export function MeetingsPage() {
   const [viewMode, setViewMode] = useState<"dialog" | "plain">("dialog");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [sysAudio, setSysAudio] = useState<SystemAudioAvailability | null>(null);
   const [isDaily, setIsDaily] = useState(false);
   const [syncStatus, setSyncStatus] = useState<
@@ -254,9 +255,11 @@ export function MeetingsPage() {
         setLiveChunks([]);
         elapsedStart.current = Date.now();
       } else if (pl.state === "stopped") {
+        setStopping(false);
         setActiveId(null);
         refreshList();
       } else if (pl.state === "error") {
+        setStopping(false);
         setError(pl.message);
         setActiveId(null);
       }
@@ -294,10 +297,11 @@ export function MeetingsPage() {
       const res = await commands.meetingStop();
       if (res.status !== "ok") {
         setError(res.error);
+      } else {
+        // Command accepted — show "stopping" state until the background
+        // thread emits the "stopped" event.
+        setStopping(true);
       }
-      // The actual cleanup (join threads, finalize DB, cloud sync) happens
-      // in a background thread. The meeting-state-event "stopped" listener
-      // above will clear activeId and refresh the list when it's done.
     } finally {
       setBusy(false);
     }
@@ -410,15 +414,19 @@ export function MeetingsPage() {
           ) : (
             <button
               onClick={handleStop}
-              disabled={busy}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg bg-red-600 text-white font-medium hover:opacity-90 disabled:opacity-50 transition"
+              disabled={busy || stopping}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg font-medium disabled:opacity-50 transition ${
+                stopping
+                  ? "bg-amber-600 text-white"
+                  : "bg-red-600 text-white hover:opacity-90"
+              }`}
             >
-              {busy ? (
+              {busy || stopping ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Square className="w-4 h-4" />
               )}
-              Stop Meeting
+              {stopping ? "Stopping…" : "Stop Meeting"}
             </button>
           )}
         </div>

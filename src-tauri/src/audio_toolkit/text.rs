@@ -231,6 +231,57 @@ fn get_filler_words_for_language(lang: &str) -> &'static [&'static str] {
 
 static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
 
+/// Well-known Whisper hallucination patterns.  When the model receives silence
+/// or very low-level noise it tends to produce stock phrases from its training
+/// data (YouTube intros/outros, subtitling boilerplate, etc.).  Matching is
+/// case-insensitive and checks whether the *entire* trimmed output matches one
+/// of these patterns so legitimate speech is never caught.
+static HALLUCINATION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+    let patterns = [
+        // English
+        r"^thanks?\s*(you)?\s*(for)?\s*(watching|listening|viewing)!?\.?$",
+        r"^(please\s+)?(like\s+and\s+)?subscribe.*$",
+        r"^(see|we'?ll see) you (in )?(the )?next (one|video|episode)!?\.?$",
+        r"^you$",
+        r"^\.*$",
+        r"^\.{2,}$",
+        // Spanish
+        r"^hola a todos,?\s*(hoy )?(vamos a|les voy a) hablar (de|sobre).*$",
+        r"^gracias por ver(lo)?!?\.?$",
+        r"^nos vemos en el (próximo|siguiente) video!?\.?$",
+        r"^suscr[íi]bete.*$",
+        // Portuguese
+        r"^obrigad[oa] por assistir!?\.?$",
+        // French
+        r"^merci d'avoir regard[ée]!?\.?$",
+        r"^merci pour votre attention!?\.?$",
+        // German
+        r"^danke f[üu]rs? zuschauen!?\.?$",
+        // Chinese / Japanese / Korean (romanized or native)
+        r"^谢谢观看!?\.?$",
+        r"^ご視聴ありがとうございました!?\.?$",
+        // Generic subtitle artifacts
+        r"^(sub(title)?s?\s*(by|:)?\s*.*)$",
+        r"^(translated|captioned|subtitled)\s*by\s*.*$",
+        r"^[\.\s,!?…]*$",
+    ];
+    patterns
+        .iter()
+        .filter_map(|p| regex::RegexBuilder::new(p).case_insensitive(true).build().ok())
+        .collect()
+});
+
+/// Returns true if the text matches a well-known Whisper hallucination pattern.
+fn is_hallucination(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    HALLUCINATION_PATTERNS
+        .iter()
+        .any(|re| re.is_match(trimmed))
+}
+
 /// Collapses repeated words (3+ repetitions) to a single instance.
 /// E.g., "wh wh wh wh" -> "wh", "I I I I" -> "I"
 fn collapse_stutters(text: &str) -> String {
@@ -290,6 +341,11 @@ pub fn filter_transcription_output(
     lang: &str,
     custom_filler_words: &Option<Vec<String>>,
 ) -> String {
+    // Reject entire output if it matches a known hallucination pattern.
+    if is_hallucination(text) {
+        return String::new();
+    }
+
     let mut filtered = text.to_string();
 
     // Build filler patterns from custom list or language defaults
@@ -563,5 +619,70 @@ mod tests {
             "got double-counted result: {}",
             result
         );
+    }
+
+    // ── Hallucination filter tests ──────────────────────────────────
+
+    #[test]
+    fn test_hallucination_thank_you_for_watching() {
+        let result = filter_transcription_output("Thank you for watching!", "en", &None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hallucination_thanks_for_watching() {
+        let result = filter_transcription_output("Thanks for watching.", "en", &None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hallucination_subscribe() {
+        let result = filter_transcription_output("Please like and subscribe!", "en", &None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hallucination_spanish_intro() {
+        let result = filter_transcription_output(
+            "Hola a todos, hoy vamos a hablar sobre cómo hacer un deploy",
+            "es",
+            &None,
+        );
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hallucination_dots_only() {
+        let result = filter_transcription_output("...", "en", &None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hallucination_you_only() {
+        let result = filter_transcription_output("you", "en", &None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hallucination_does_not_catch_real_speech() {
+        // Real speech that happens to contain similar words should NOT be filtered
+        let result = filter_transcription_output(
+            "Thank you for watching the demo, now let me explain the architecture",
+            "en",
+            &None,
+        );
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_hallucination_see_you_next() {
+        let result = filter_transcription_output("See you in the next one!", "en", &None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hallucination_subtitles_by() {
+        let result = filter_transcription_output("Subtitles by the Amara.org community", "en", &None);
+        assert_eq!(result, "");
     }
 }

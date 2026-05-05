@@ -180,6 +180,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   title="Meeting in progress"
                 />
               )}
+              {section.id === "cloudSync" &&
+                !settings?.cloud_sync_api_key && (
+                  <span
+                    className="ml-auto w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"
+                    title={t("settings.cloudSync.onboarding.title")}
+                  />
+                )}
             </div>
           );
         })}

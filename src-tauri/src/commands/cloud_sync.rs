@@ -88,10 +88,13 @@ pub async fn cloud_update_action_item(
     app: AppHandle,
     item_id: String,
     status: String,
+    edits_json: Option<String>,
 ) -> Result<(), String> {
     let s = settings::get_settings(&app);
+    let edits = edits_json
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
     tokio::task::spawn_blocking(move || {
-        cloud_sync::update_action_item(&s, &item_id, &status).map_err(|e| e.to_string())
+        cloud_sync::update_action_item(&s, &item_id, &status, edits).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?

@@ -45,8 +45,6 @@ const PROVIDER_META: Record<string, { label: string; icon: string; color: string
   notion: { label: "Notion", icon: "N", color: "bg-[#000]/10 text-[#000] dark:bg-white/10 dark:text-white" },
   "google-calendar": { label: "Google Calendar", icon: "G", color: "bg-blue-500/10 text-blue-600" },
   "outlook-calendar": { label: "Outlook Calendar", icon: "O", color: "bg-sky-500/10 text-sky-600" },
-  monday: { label: "Monday.com", icon: "M", color: "bg-orange-500/10 text-orange-600" },
-  "read-ai": { label: "Read AI", icon: "R", color: "bg-purple-500/10 text-purple-600" },
 };
 
 export const IntegrationsPage: React.FC = () => {
@@ -61,7 +59,6 @@ export const IntegrationsPage: React.FC = () => {
   // Config options fetched on demand
   const [notionDatabases, setNotionDatabases] = useState<SelectOption[]>([]);
   const [notionStatuses, setNotionStatuses] = useState<SelectOption[]>([]);
-  const [mondayBoards, setMondayBoards] = useState<SelectOption[]>([]);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
 
@@ -133,9 +130,6 @@ export const IntegrationsPage: React.FC = () => {
             setNotionStatuses(statusResult.data.map((s: { name: string }) => ({ id: s.name, name: s.name })));
           }
         }
-      } else if (provider === "monday") {
-        const result = await (commands as any).cloudGetMondayBoards();
-        if (result.status === "ok") setMondayBoards(result.data);
       }
     } catch { /* ignore */ }
     finally { setLoadingConfig(false); }
@@ -210,12 +204,12 @@ export const IntegrationsPage: React.FC = () => {
       )}
 
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
-        {integrations.map((integration) => {
+        {integrations.filter((i) => !["monday", "read-ai", "fireflies"].includes(i.provider)).map((integration) => {
           const meta = PROVIDER_META[integration.provider] ?? {
             label: integration.provider, icon: "?", color: "bg-mid-gray/10",
           };
           const isExpanded = expanded === integration.provider;
-          const hasConfig = integration.provider === "notion" || integration.provider === "monday";
+          const hasConfig = integration.provider === "notion";
 
           return (
             <div key={integration.provider} className="rounded-xl border border-mid-gray/20 overflow-hidden">
@@ -320,15 +314,6 @@ export const IntegrationsPage: React.FC = () => {
                             />
                           )}
                         </>
-                      )}
-                      {integration.provider === "monday" && (
-                        <ConfigSelect
-                          label={t("integrations.monday.board")}
-                          options={mondayBoards}
-                          value={integration.config?.board_id ?? ""}
-                          saving={savingConfig}
-                          onChange={(id) => handleSaveSetting("MONDAY_BOARD_ID", id)}
-                        />
                       )}
                     </div>
                   )}

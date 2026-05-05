@@ -978,9 +978,9 @@ async cloudGetActionItems() : Promise<Result<CloudActionItemsResponse, string>> 
     else return { status: "error", error: e  as any };
 }
 },
-async cloudUpdateActionItem(itemId: string, status: string) : Promise<Result<null, string>> {
+async cloudUpdateActionItem(itemId: string, status: string, editsJson: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cloud_update_action_item", { itemId, status }) };
+    return { status: "ok", data: await TAURI_INVOKE("cloud_update_action_item", { itemId, status, editsJson }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
