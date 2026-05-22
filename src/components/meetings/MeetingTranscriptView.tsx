@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string */
 import React, { useState } from "react";
 import type { MeetingChunk } from "@/bindings";
 
@@ -86,7 +87,7 @@ export const MeetingTranscriptView: React.FC<MeetingTranscriptViewProps> = ({
                   : "hover:bg-mid-gray/10 text-mid-gray")
               }
             >
-              {m === "dialog" ? "Dialog" : "Plain"}
+              {m === "dialog" ? "Diálogo" : "Texto"}
             </button>
           ))}
         </div>
@@ -115,7 +116,7 @@ export const MeetingTranscriptView: React.FC<MeetingTranscriptViewProps> = ({
                   {turn.text}
                 </div>
                 <div className="text-[10px] text-mid-gray mt-0.5 px-1">
-                  {isYou ? "YOU" : "THEM"} · {formatOffset(turn.startMs)}
+                  {isYou ? "TÚ" : "ELLOS"} · {formatOffset(turn.startMs)}
                 </div>
               </div>
             );
@@ -124,7 +125,7 @@ export const MeetingTranscriptView: React.FC<MeetingTranscriptViewProps> = ({
       ) : (
         <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
           {transcriptText || (
-            <span className="italic text-mid-gray">(no transcript)</span>
+            <span className="italic text-mid-gray">(sin transcripción)</span>
           )}
         </div>
       )}

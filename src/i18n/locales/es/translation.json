@@ -10,12 +10,18 @@
   },
   "sidebar": {
     "general": "General",
+    "meetings": "Reuniones",
+    "library": "Biblioteca",
     "models": "Modelos",
     "advanced": "Avanzado",
     "postProcessing": "Post Proceso",
     "history": "Historial",
     "debug": "Depuración",
-    "about": "Acerca de"
+    "about": "Acerca de",
+    "acknowledgments": "Reconocimientos",
+    "cloudSync": "Mi Cuenta",
+    "actionItems": "Tareas de Reuniones",
+    "integrations": "Integraciones"
   },
   "onboarding": {
     "subtitle": "Para comenzar, elige un modelo de transcripción",
@@ -151,6 +157,17 @@
     "cancelDownload": "Cancelar descarga"
   },
   "settings": {
+    "transcription": {
+      "languageTitle": "Idioma",
+      "mode": {
+        "title": "Motor de Transcripción",
+        "cloud": "Nube",
+        "cloudDesc": "Mejor calidad, maneja cambio de idioma",
+        "local": "Local",
+        "localDesc": "En el dispositivo, funciona sin conexión",
+        "cloudUnavailable": "Inicia sesión en Lezat Cloud para habilitar la transcripción en la nube."
+      }
+    },
     "modelSettings": {
       "title": "Configuración de {{model}}",
       "noSettingsNeeded": "Este modelo funciona automáticamente sin necesidad de configuración."
@@ -525,9 +542,9 @@
         "button": "Ver en GitHub"
       },
       "supportDevelopment": {
-        "title": "Apoyar el Desarrollo",
-        "description": "Ayúdanos a continuar construyendo Lezat Transcript",
-        "button": "Donar"
+        "title": "Apoyar a Handy (upstream)",
+        "description": "Lezat Transcript es un fork de Handy — este botón abre la página de donación de Handy para que puedas apoyar el proyecto que hace el trabajo pesado. (Esto no es una donación a Lezat.)",
+        "button": "Donar a Handy"
       },
       "acknowledgments": {
         "title": "Reconocimientos",
@@ -537,6 +554,62 @@
           "details": "Lezat Transcript usa Whisper.cpp para procesamiento de voz a texto rápido y local. Gracias al increíble trabajo de Georgi Gerganov y colaboradores."
         }
       }
+    },
+    "cloudSync": {
+      "title": "Lezat Scheduling",
+      "onboarding": {
+        "title": "Inicia sesión para desbloquear todas las funciones",
+        "subtitle": "Crea tu cuenta gratuita o inicia sesión para sincronizar transcripciones automáticamente, extraer tareas con IA y conectar las herramientas de tu equipo — todo incluido."
+      },
+      "features": {
+        "sync": {
+          "title": "Sincronización de Reuniones",
+          "desc": "Las transcripciones se envían a tu espacio de trabajo automáticamente después de cada reunión"
+        },
+        "actions": {
+          "title": "Tareas de Reuniones",
+          "desc": "La IA extrae tareas, asigna responsables y registra fechas límite de tus reuniones"
+        },
+        "integrations": {
+          "title": "Integraciones",
+          "desc": "Envía tareas a Notion, Monday.com, Google Calendar u Outlook"
+        },
+        "team": {
+          "title": "Panel de Equipo",
+          "desc": "Tu equipo puede ver transcripciones y tareas desde el panel web"
+        }
+      },
+      "login": {
+        "title": "Inicia sesión en tu cuenta",
+        "google": "Continuar con Google",
+        "or": "o",
+        "withEmail": "Iniciar sesión con correo",
+        "email": "Correo electrónico",
+        "password": "Contraseña",
+        "signIn": "Iniciar Sesión",
+        "waitingGoogle": "Completa el inicio de sesión en tu navegador...",
+        "cancel": "Cancelar",
+        "noAccount": "¿No tienes cuenta?",
+        "signUpLink": "Regístrate",
+        "hasAccount": "¿Ya tienes cuenta?",
+        "signInLink": "Inicia sesión",
+        "registerTitle": "Crea tu cuenta",
+        "fullName": "Nombre completo",
+        "confirmPassword": "Confirmar contraseña",
+        "signUp": "Registrarse",
+        "passwordMismatch": "Las contraseñas no coinciden"
+      },
+      "connected": {
+        "title": "Conectado a Lezat Scheduling",
+        "whatYouGet": "Qué incluye"
+      },
+      "autoSync": {
+        "title": "Sincronizar reuniones automáticamente",
+        "desc": "Envía las transcripciones de reuniones a tu espacio de trabajo automáticamente cuando termine una reunión"
+      },
+      "logout": "Desconectar",
+      "connectionSuccess": "Conectado",
+      "connectionFailed": "Error de conexión"
     }
   },
   "footer": {
@@ -552,9 +625,9 @@
     "installing": "Instalando...",
     "preparing": "Preparando...",
     "checkForUpdates": "Buscar actualizaciones",
-    "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateTitle": "Se requiere actualización manual",
+    "portableUpdateMessage": "Las instalaciones portables no se pueden actualizar automáticamente. Para actualizar: descarga el último instalador NSIS desde GitHub Releases, instálalo en la misma carpeta y luego copia tu carpeta Data/ (configuración, modelos, grabaciones) de la versión anterior a la nueva.",
+    "portableUpdateButton": "Abrir GitHub Releases"
   },
   "common": {
     "loading": "Cargando...",
@@ -608,5 +681,96 @@
   "overlay": {
     "transcribing": "Transcribiendo...",
     "processing": "Procesando..."
+  },
+  "actionItems": {
+    "title": "Tareas de Reuniones",
+    "notConfigured": "Se requiere cuenta",
+    "configureHint": "Inicia sesión o crea tu cuenta gratuita en Mi Cuenta para ver las tareas de tus reuniones",
+    "empty": "Aún no hay tareas. Aparecerán aquí después de que se transcriban tus reuniones.",
+    "retry": "Reintentar",
+    "refresh": "Actualizar",
+    "summary": "{{total}} tareas en {{meetings}} reuniones",
+    "untitledMeeting": "Reunión sin título",
+    "approval": {
+      "title": "Sincronizar esta tarea a:",
+      "approve": "Aprobar y Sincronizar",
+      "noIntegrations": "No hay integraciones conectadas. Ve a Integraciones para configurarlas.",
+      "kanban": "Base de datos",
+      "board": "Tablero",
+      "status": "Estado"
+    },
+    "bulk": {
+      "selected": "{{count}} tareas seleccionadas",
+      "clear": "Limpiar selección",
+      "approve": "Aprobar {{count}} tareas",
+      "addToTimesheet": "Agregar al registro de horas",
+      "selectGroup": "Seleccionar todas las pendientes de esta reunión"
+    },
+    "review": {
+      "title": "Revisar antes de aprobar",
+      "subtitle": "Revisa y edita los detalles de las {{count}} tareas seleccionadas antes de confirmar.",
+      "description": "Descripción",
+      "assignee": "Responsable",
+      "dueDate": "Fecha límite",
+      "meeting": "Reunión",
+      "cancel": "Cancelar",
+      "confirm": "Confirmar y Aprobar",
+      "confirming": "Aprobando...",
+      "noDescription": "Sin descripción",
+      "dateRequired": "{{count}} tarea(s) necesitan una fecha límite para sincronizar con el calendario"
+    },
+    "previousTask": "Tarea anterior",
+    "loadMore": "Mostrar más reuniones ({{remaining}} restantes)"
+  },
+  "integrations": {
+    "title": "Integraciones",
+    "notConfigured": "Se requiere cuenta",
+    "configureHint": "Inicia sesión o crea tu cuenta gratuita en Mi Cuenta para administrar tus integraciones",
+    "connected": "Conectado",
+    "disconnected": "No conectado",
+    "connect": "Conectar",
+    "disconnect": "Desconectar",
+    "configure": "Configurar",
+    "dismiss": "Descartar",
+    "refresh": "Actualizar",
+    "empty": "No hay integraciones disponibles",
+    "notion": {
+      "database": "Base de datos de Notion",
+      "status": "Estado de la tarea"
+    },
+    "monday": {
+      "board": "Tablero de Monday"
+    },
+    "timesheet": {
+      "title": "Registro de Horas",
+      "email": "Correo electrónico",
+      "password": "Contraseña",
+      "login": "Iniciar Sesión",
+      "loggingIn": "Iniciando sesión...",
+      "loginError": "Error al iniciar sesión. Verifica tus credenciales.",
+      "project": "Proyecto predeterminado",
+      "hours": "Horas",
+      "hoursPlaceholder": "ej. 1h 30m",
+      "description": "Descripción",
+      "descriptionPlaceholder": "¿En qué trabajaste?",
+      "date": "Fecha",
+      "submit": "Registrar Tiempo",
+      "submitting": "Enviando...",
+      "update": "Actualizar",
+      "updating": "Actualizando...",
+      "delete": "Eliminar",
+      "deleting": "Eliminando...",
+      "success": "Registro de tiempo creado correctamente",
+      "updateSuccess": "Registro de tiempo actualizado",
+      "deleteSuccess": "Registro de tiempo eliminado",
+      "addEntry": "Agregar Registro de Tiempo",
+      "editEntry": "Editar Registro de Tiempo",
+      "logged": "Registrado",
+      "approved": "Aprobado",
+      "aiSuggest": "Sugerencia IA",
+      "notConnected": "Conéctate primero al Registro de Horas en la configuración de Integraciones.",
+      "sessionExpired": "Tu sesión de Registro de Horas ha expirado.",
+      "reconnectHint": "Ve a Integraciones e inicia sesión en el Registro de Horas nuevamente."
+    }
   }
 }

@@ -20,15 +20,15 @@ include!(concat!(env!("OUT_DIR"), "/tray_translations.rs"));
 
 /// Get localized tray menu strings based on the system locale.
 ///
-/// Lookup order: full locale (e.g. "zh-TW") → language code ("zh") → English.
+/// Lookup order: full locale (e.g. "zh-TW") → language code ("zh") → Spanish.
 pub fn get_tray_translations(locale: Option<String>) -> TrayStrings {
-    let locale_str = locale.as_deref().unwrap_or("en");
-    let lang_code = locale_str.split(['-', '_']).next().unwrap_or("en");
+    let locale_str = locale.as_deref().unwrap_or("es");
+    let lang_code = locale_str.split(['-', '_']).next().unwrap_or("es");
 
     TRANSLATIONS
         .get(locale_str)
         .or_else(|| TRANSLATIONS.get(lang_code))
-        .or_else(|| TRANSLATIONS.get("en"))
+        .or_else(|| TRANSLATIONS.get("es"))
         .cloned()
-        .expect("English translations must exist")
+        .expect("Spanish translations must exist")
 }

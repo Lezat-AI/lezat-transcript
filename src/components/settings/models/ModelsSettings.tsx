@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -261,16 +262,16 @@ export const ModelsSettings: React.FC = () => {
                 ({recommended.size_mb} MB)
               </span>{" "}
               <span className="text-text/80">
-                is recommended for your hardware. {recommended.reason} You can
-                pick a different model below — bigger ones (Turbo, Large) get
-                you more accuracy at the cost of speed and disk space.
+                es recomendado para tu hardware. {recommended.reason} Puedes
+                elegir un modelo diferente abajo — los más grandes (Turbo, Large)
+                ofrecen más precisión a costa de velocidad y espacio en disco.
               </span>
             </div>
           </div>
           <button
             onClick={dismissRecommendation}
             className="absolute top-2 right-2 p-1 text-text/50 hover:text-text rounded"
-            title="Dismiss"
+            title="Descartar"
           >
             <X className="w-3.5 h-3.5" />
           </button>

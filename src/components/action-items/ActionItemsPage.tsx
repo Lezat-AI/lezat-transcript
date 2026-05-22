@@ -624,16 +624,6 @@ function ApprovalReviewModal({
     integrations.find((i) => i.provider === "notion")?.config?.todo_status ?? "",
   );
 
-  useEffect(() => {
-    if (notionDbId && !config.notionStatuses[notionDbId]) {
-      (commands as any).cloudGetNotionStatusOptions(notionDbId).then((r: any) => {
-        if (r.status === "ok") {
-          config.notionStatuses[notionDbId] = r.data.map((o: any) => ({ id: o.name, name: o.name }));
-        }
-      }).catch(() => {});
-    }
-  }, [notionDbId, config]);
-
   const notionStatusOpts = config.notionStatuses[notionDbId] ?? [];
 
   const toggleTarget = (p: string) => setTargets((prev) => {
@@ -894,7 +884,7 @@ const ActionItemRow = React.memo(function ActionItemRow({
         <div className="flex items-center gap-2 mt-1 text-[11px] text-mid-gray flex-wrap">
           {item.task_type === "completed_previous" && !hasTimesheetEntry && (
             <span className="px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium">
-              Tarea anterior
+              {t("actionItems.previousTask")}
             </span>
           )}
           {hasTimesheetEntry && (
@@ -1092,18 +1082,21 @@ export const ActionItemsPage: React.FC = () => {
     const promises: Promise<void>[] = [];
     if (notion) {
       promises.push(
-        (commands as any).cloudGetNotionDatabases().then((r: any) => {
-          if (r.status === "ok") cfg.notionDbs = r.data;
+        (commands as any).cloudGetNotionDatabases().then(async (r: any) => {
+          if (r.status === "ok") {
+            cfg.notionDbs = r.data;
+            // Pre-load statuses for ALL databases so they're ready when the modal opens
+            const statusPromises = (r.data as SelectOption[]).map((db) =>
+              (commands as any).cloudGetNotionStatusOptions(db.id).then((sr: any) => {
+                if (sr.status === "ok") {
+                  cfg.notionStatuses[db.id] = sr.data.map((o: any) => ({ id: o.name, name: o.name }));
+                }
+              }).catch(() => {}),
+            );
+            await Promise.all(statusPromises);
+          }
         }).catch(() => {}),
       );
-      const dbId = notion.config?.database_id;
-      if (dbId) {
-        promises.push(
-          (commands as any).cloudGetNotionStatusOptions(dbId).then((r: any) => {
-            if (r.status === "ok") cfg.notionStatuses[dbId] = r.data.map((o: any) => ({ id: o.name, name: o.name }));
-          }).catch(() => {}),
-        );
-      }
     }
     Promise.all(promises).then(() => setPreloaded(cfg));
   }, [integrations]);

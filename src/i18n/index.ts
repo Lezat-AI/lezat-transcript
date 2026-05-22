@@ -71,12 +71,12 @@ const getSupportedLanguage = (
   return supported ? supported.code : null;
 };
 
-// Initialize i18n with English as default
+// Initialize i18n with Spanish (Latin America) as default
 // Language will be synced from settings after init
 i18n.use(initReactI18next).init({
   resources,
-  lng: "en",
-  fallbackLng: "en",
+  lng: "es",
+  fallbackLng: "es",
   interpolation: {
     escapeValue: false, // React already escapes values
   },
@@ -85,30 +85,12 @@ i18n.use(initReactI18next).init({
   },
 });
 
-// Sync language from app settings
+// Language is fixed to Spanish (Latin America) for this product.
+// The sync from backend settings is disabled to prevent the system
+// locale (e.g. en-US on Windows) from overriding the default.
 export const syncLanguageFromSettings = async () => {
-  try {
-    const result = await commands.getAppSettings();
-    if (result.status === "ok" && result.data.app_language) {
-      const supported = getSupportedLanguage(result.data.app_language);
-      if (supported && supported !== i18n.language) {
-        await i18n.changeLanguage(supported);
-      }
-    } else {
-      // Fall back to system locale detection if no saved preference
-      const systemLocale = await locale();
-      const supported = getSupportedLanguage(systemLocale);
-      if (supported && supported !== i18n.language) {
-        await i18n.changeLanguage(supported);
-      }
-    }
-  } catch (e) {
-    console.warn("Failed to sync language from settings:", e);
-  }
+  // no-op: language is always "es"
 };
-
-// Run language sync on init
-syncLanguageFromSettings();
 
 // Listen for language changes to update HTML dir and lang attributes
 i18n.on("languageChanged", (lng) => {

@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -23,7 +24,7 @@ async function downloadMeetingAudio(
 ): Promise<void> {
   const dest = await save({
     defaultPath: suggestedName,
-    filters: [{ name: "WAV audio", extensions: ["wav"] }],
+    filters: [{ name: "Audio WAV", extensions: ["wav"] }],
   });
   if (!dest) return;
   const res = await commands.exportMeetingAudio(meetingId, track, dest);
@@ -37,8 +38,8 @@ function meetingAudioSources(audioPath: string | null): { label: string; url: st
   // Audio path is a directory holding mic.wav and optionally system.wav.
   const join = (a: string, b: string) => (a.endsWith("/") ? a + b : a + "/" + b);
   return [
-    { label: "Microphone (YOU)", url: convertFileSrc(join(audioPath, "mic.wav")) },
-    { label: "System audio (THEM)", url: convertFileSrc(join(audioPath, "system.wav")) },
+    { label: "Micrófono (TÚ)", url: convertFileSrc(join(audioPath, "mic.wav")) },
+    { label: "Audio del sistema (ELLOS)", url: convertFileSrc(join(audioPath, "system.wav")) },
   ];
 }
 
@@ -122,7 +123,7 @@ function InlineTitle({
         type="button"
         onClick={() => setEditing(true)}
         className="group text-left flex items-center gap-1.5"
-        title="Click to rename"
+        title="Clic para renombrar"
       >
         <h3 className="text-base font-bold truncate">{initial}</h3>
         <Pencil className="w-3.5 h-3.5 text-mid-gray opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
@@ -348,7 +349,7 @@ export function MeetingsPage() {
       return (
         <div className="text-xs text-lezat-sage flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-lezat-sage" />
-          Captured via <span className="font-medium">{sysAudio.label}</span>
+          Capturado vía <span className="font-medium">{sysAudio.label}</span>
         </div>
       );
     }
@@ -365,7 +366,7 @@ export function MeetingsPage() {
               }
               className="ml-1 inline-flex items-center gap-1 underline"
             >
-              open link <ExternalLink className="w-3 h-3" />
+              abrir enlace <ExternalLink className="w-3 h-3" />
             </button>
           )}
         </div>
@@ -382,11 +383,9 @@ export function MeetingsPage() {
       <section className="rounded-xl border border-mid-gray/20 p-5 flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold">Meeting Mode</h2>
+            <h2 className="text-lg font-bold">Modo Reunión</h2>
             <p className="text-sm text-mid-gray">
-              Records your microphone and, optionally, the other side of the
-              call — then transcribes continuously. Use the checkbox below to
-              enable system-audio capture.
+              Graba tu micrófono y, opcionalmente, el otro lado de la llamada — luego transcribe continuamente. Usa la casilla de abajo para habilitar la captura de audio del sistema.
             </p>
           </div>
           {activeId !== null && (
@@ -409,7 +408,7 @@ export function MeetingsPage() {
               ) : (
                 <Mic className="w-4 h-4" />
               )}
-              Start Meeting
+              Iniciar Reunión
             </button>
           ) : (
             <button
@@ -426,7 +425,7 @@ export function MeetingsPage() {
               ) : (
                 <Square className="w-4 h-4" />
               )}
-              {stopping ? "Stopping…" : "Stop Meeting"}
+              {stopping ? "Deteniendo…" : "Detener Reunión"}
             </button>
           )}
         </div>
@@ -444,7 +443,7 @@ export function MeetingsPage() {
               />
               <span className="inline-flex items-center gap-1.5 text-sm">
                 <Speaker className="w-4 h-4" />
-                Also capture the other side of the call
+                Capturar también el otro lado de la llamada
               </span>
             </label>
             <div className="flex-1 min-w-0 pt-0.5">
@@ -460,9 +459,9 @@ export function MeetingsPage() {
               disabled={activeId !== null}
             />
             <Save className="w-4 h-4" />
-            <span>Save meeting audio to disk</span>
+            <span>Guardar audio de la reunión en disco</span>
             <span className="text-xs text-mid-gray">
-              (opt-in — a 45-min meeting is ~80 MB per source)
+              (opcional — una reunión de 45 min ocupa ~80 MB por fuente)
             </span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer select-none text-sm">
@@ -476,7 +475,7 @@ export function MeetingsPage() {
             <ListChecks className="w-4 h-4" />
             <span>Daily standup</span>
             <span className="text-xs text-mid-gray">
-              (extracts completed tasks for timesheet)
+              (extrae tareas completadas para el registro de horas)
             </span>
           </label>
         </div>
@@ -505,20 +504,20 @@ export function MeetingsPage() {
               {status.state === "syncing" && (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Syncing meeting to Lezat Scheduling...</span>
+                  <span>Sincronizando reunión con Lezat Scheduling...</span>
                 </>
               )}
               {status.state === "success" && (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Meeting synced to Lezat Scheduling</span>
+                  <span>Reunión sincronizada con Lezat Scheduling</span>
                 </>
               )}
               {status.state === "failed" && (
                 <>
                   <CloudOff className="w-4 h-4" />
                   <span className="flex-1 truncate">
-                    Sync failed{status.message ? `: ${status.message}` : ""}
+                    Error de sincronización{status.message ? `: ${status.message}` : ""}
                   </span>
                   <button
                     onClick={async () => {
@@ -540,7 +539,7 @@ export function MeetingsPage() {
                       }
                     }}
                     className="shrink-0 p-1 rounded hover:bg-red-500/20 transition-colors"
-                    title="Retry sync"
+                    title="Reintentar sincronización"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>
@@ -555,13 +554,12 @@ export function MeetingsPage() {
       {activeId !== null && (
         <section className="rounded-xl border border-mid-gray/20 p-5 flex flex-col gap-3">
           <h3 className="text-sm font-bold uppercase tracking-wide text-mid-gray">
-            Live Transcript
+            Transcripción en Vivo
           </h3>
           <div className="max-h-80 overflow-y-auto text-sm leading-relaxed flex flex-col gap-2">
             {liveChunks.length === 0 ? (
               <p className="text-mid-gray italic">
-                Listening… the first line usually appears after ~12 seconds of
-                audio.
+                Escuchando… la primera línea suele aparecer después de ~12 segundos de audio.
               </p>
             ) : (
               liveChunks.map((c, i) => (
@@ -573,9 +571,9 @@ export function MeetingsPage() {
                         ? "bg-lezat-sage/20 text-lezat-sage"
                         : "bg-logo-primary/15 text-logo-primary")
                     }
-                    title={c.source === "system" ? "Other side of the call" : "Your microphone"}
+                    title={c.source === "system" ? "El otro lado de la llamada" : "Tu micrófono"}
                   >
-                    {c.source === "system" ? "THEM" : "YOU"}
+                    {c.source === "system" ? "ELLOS" : "TÚ"}
                   </span>
                   <span className="flex-1 whitespace-pre-wrap">{c.text}</span>
                 </div>
@@ -589,9 +587,7 @@ export function MeetingsPage() {
       {/* Past meetings + audio playback + dialog view + downloads now
           live in the Library tab. Meetings is a recording console only. */}
       <p className="text-xs text-mid-gray italic">
-        Past meetings, audio playback, downloads, and the conversation view
-        are in the <span className="font-medium not-italic">Library</span>{" "}
-        tab.
+        Las reuniones pasadas, reproducción de audio, descargas y la vista de conversación están en la pestaña <span className="font-medium not-italic">Biblioteca</span>.
       </p>
     </div>
   );

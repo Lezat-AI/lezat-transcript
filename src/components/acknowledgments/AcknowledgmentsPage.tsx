@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string */
 import React from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink } from "lucide-react";
@@ -12,36 +13,36 @@ const ITEMS: Acknowledgment[] = [
   {
     name: "Handy",
     blurb:
-      "Lezat Transcript is a fork of Handy by CJ Pais. The app shell, push-to-talk flow, transcription orchestration, and much of the Tauri scaffolding come straight from upstream. Thank you for the MIT license and the clean codebase.",
+      "Lezat Transcript es un fork de Handy por CJ Pais. La estructura de la app, el flujo de presionar para hablar, la orquestación de transcripción y gran parte del scaffolding de Tauri provienen directamente del proyecto original. Gracias por la licencia MIT y el código limpio.",
     url: "https://github.com/cjpais/Handy",
   },
   {
-    name: "Whisper by OpenAI",
-    blurb: "The speech-recognition model that does the actual transcribing.",
+    name: "Whisper de OpenAI",
+    blurb: "El modelo de reconocimiento de voz que realiza la transcripción.",
     url: "https://github.com/openai/whisper",
   },
   {
-    name: "whisper.cpp and ggml",
+    name: "whisper.cpp y ggml",
     blurb:
-      "Amazing cross-platform Whisper inference and acceleration — the reason this runs locally on every laptop instead of calling a cloud.",
+      "Increíble inferencia multiplataforma de Whisper con aceleración — la razón por la que esto funciona localmente en cada laptop en vez de llamar a la nube.",
     url: "https://github.com/ggerganov/whisper.cpp",
   },
   {
     name: "Silero VAD",
     blurb:
-      "Great lightweight voice-activity detection — gates silence efficiently without CPU cost.",
+      "Detección de actividad de voz ligera y eficiente — filtra el silencio sin costo de CPU.",
     url: "https://github.com/snakers4/silero-vad",
   },
   {
     name: "Tauri",
     blurb:
-      "The excellent Rust-based desktop app framework that keeps the bundle small and the UI native-feeling across macOS, Windows, and Linux.",
+      "El excelente framework de aplicaciones de escritorio basado en Rust que mantiene el paquete pequeño y la interfaz nativa en macOS, Windows y Linux.",
     url: "https://tauri.app",
   },
   {
-    name: "Community contributors",
+    name: "Colaboradores de la comunidad",
     blurb:
-      "Everyone who has helped make Handy (and by extension Lezat Transcript) better — bug reports, translations, PRs, docs, and feedback.",
+      "Todos los que han ayudado a mejorar Handy (y por extensión Lezat Transcript) — reportes de bugs, traducciones, PRs, documentación y retroalimentación.",
   },
 ];
 
@@ -49,10 +50,10 @@ export function AcknowledgmentsPage() {
   return (
     <div className="w-full max-w-3xl flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <h2 className="text-lg font-bold">Acknowledgments</h2>
-        <p className="text-sm text-mid-gray leading-relaxed">
-          Lezat Transcript stands on a lot of shoulders. Below are the projects
-          and people without whom this would not exist.
+<h2 className="text-lg font-bold">Reconocimientos</h2>
+<p className="text-sm text-mid-gray leading-relaxed">
+          Lezat Transcript se apoya en muchos hombros. A continuación están los
+          proyectos y personas sin los cuales esto no existiría.
         </p>
       </header>
 
@@ -67,7 +68,7 @@ export function AcknowledgmentsPage() {
                   className="text-xs text-mid-gray hover:text-foreground inline-flex items-center gap-1 shrink-0"
                   title={item.url}
                 >
-                  Open
+                  Abrir
                   <ExternalLink className="w-3 h-3" />
                 </button>
               )}

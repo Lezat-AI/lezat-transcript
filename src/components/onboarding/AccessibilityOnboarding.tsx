@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string */
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "@tauri-apps/plugin-os";
@@ -456,10 +457,10 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-medium text-text">
-                  System Audio Recording
+                  Grabación de Audio del Sistema
                 </h3>
                 <p className="text-sm text-text/60 mb-3">
-                  Lets Meeting Mode capture the other side of a call (Zoom,
+                  Permite que el Modo Reunión capture el otro lado de una llamada (Zoom,
                   Meet, etc.).
                 </p>
                 <div className="flex items-center gap-3">
@@ -483,7 +484,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     }
                     className="text-xs text-text/50 hover:text-text/80 inline-flex items-center gap-1"
                   >
-                    Open Settings
+                    Abrir Ajustes
                     <ExternalLink className="w-3 h-3" />
                   </button>
                 </div>
@@ -520,20 +521,16 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     {stalenessSuspected && (
                       <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-text/80 leading-relaxed">
                         <p className="font-medium text-amber-500 mb-1">
-                          Still waiting — this usually means macOS has a stale
-                          entry from a previous install.
+                          Sigue esperando — esto generalmente significa que macOS tiene una entrada obsoleta de una instalación anterior.
                         </p>
                         <p className="mb-2">
-                          Open <span className="font-mono">System Settings →
-                          Privacy &amp; Security → Accessibility</span>, remove
-                          any existing "Lezat Transcript" entry (the minus
-                          button), then click Retry below.
+                          Abre Ajustes del Sistema → Privacidad y Seguridad → Accesibilidad, elimina cualquier entrada existente de &quot;Lezat Transcript&quot; (el botón menos), luego haz clic en Reintentar abajo.
                         </p>
                         <button
                           onClick={handleRetryAccessibility}
                           className="px-3 py-1.5 rounded bg-lezat-sage text-[#0d0d1a] text-xs font-medium hover:opacity-90"
                         >
-                          Retry detection
+                          Reintentar detección
                         </button>
                       </div>
                     )}

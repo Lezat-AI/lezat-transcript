@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -111,7 +112,7 @@ async function downloadMeetingAudio(
 ): Promise<void> {
   const dest = await save({
     defaultPath: suggestedName,
-    filters: [{ name: "WAV audio", extensions: ["wav"] }],
+    filters: [{ name: "Audio WAV", extensions: ["wav"] }],
   });
   if (!dest) return;
   const res = await commands.exportMeetingAudio(meetingId, track, dest);
@@ -260,7 +261,7 @@ export function LibraryPage() {
     setRetryingIds((prev) => new Set(prev).add(item.id));
     try {
       const res = await commands.retryHistoryEntryTranscription(item.id);
-      if (res.status !== "ok") toast.error("Retry failed");
+      if (res.status !== "ok") toast.error("Error al reintentar");
     } finally {
       setRetryingIds((prev) => {
         const n = new Set(prev);
@@ -307,21 +308,21 @@ export function LibraryPage() {
     <div className="w-full max-w-4xl flex flex-col gap-4">
       <header className="flex flex-col gap-1">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold">Library</h2>
+          <h2 className="text-lg font-bold">Biblioteca</h2>
           <Button
             onClick={openRecordingsFolder}
             variant="secondary"
             size="sm"
             className="flex items-center gap-2"
-            title="Open the folder containing both recordings/ (dictations) and meetings/ (meeting audio)"
+            title="Abrir la carpeta que contiene grabaciones/ (dictados) y reuniones/ (audio de reuniones)"
           >
             <FolderOpen className="w-4 h-4" />
-            <span>Open audio folder</span>
+            <span>Abrir carpeta de audio</span>
           </Button>
         </div>
         <p className="text-sm text-mid-gray">
-          Everything you've captured — dictations and meetings — in one place.
-          Audio playback, retries, downloads, all here.
+          Todo lo que has capturado — dictados y reuniones — en un solo lugar.
+          Reproducción de audio, reintentos, descargas, todo aquí.
         </p>
       </header>
 
@@ -340,10 +341,10 @@ export function LibraryPage() {
               }
             >
               {f === "all"
-                ? `All (${counts.all})`
+                ? `Todo (${counts.all})`
                 : f === "dictation"
-                  ? `Dictation (${counts.dictation})`
-                  : `Meeting (${counts.meeting})`}
+                  ? `Dictado (${counts.dictation})`
+                  : `Reunión (${counts.meeting})`}
             </button>
           ))}
         </div>
@@ -354,7 +355,7 @@ export function LibraryPage() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search titles + transcripts"
+            placeholder="Buscar títulos + transcripciones"
             className="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-mid-gray/25 bg-transparent focus:border-logo-primary focus:outline-none"
           />
         </div>
@@ -363,12 +364,12 @@ export function LibraryPage() {
       {visible.length === 0 ? (
         <div className="text-sm text-mid-gray italic py-8 text-center">
           {query
-            ? "Nothing matches that search."
+            ? "Nada coincide con esa búsqueda."
             : filter === "all"
-              ? "No captures yet. Use push-to-talk (Opt+Space) or start a Meeting to begin."
+              ? "Aún no hay capturas. Usa presionar para hablar (Opt+Espacio) o inicia una Reunión para empezar."
               : filter === "dictation"
-                ? "No dictations yet."
-                : "No meetings yet."}
+                ? "Aún no hay dictados."
+                : "Aún no hay reuniones."}
         </div>
       ) : (
         <ul className="flex flex-col rounded-xl border border-mid-gray/20 divide-y divide-mid-gray/15 overflow-hidden">
@@ -422,7 +423,7 @@ export function LibraryPage() {
                         }
                       }}
                       className="ml-1 p-1 text-mid-gray hover:text-text shrink-0"
-                      title="Download mic audio"
+                      title="Descargar audio del micrófono"
                     >
                       <Download className="w-4 h-4" />
                     </button>
@@ -433,7 +434,7 @@ export function LibraryPage() {
                       handleDelete(item);
                     }}
                     className="ml-1 p-1 text-mid-gray hover:text-red-500 shrink-0"
-                    title="Delete"
+                    title="Eliminar"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -454,13 +455,13 @@ export function LibraryPage() {
                       <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
                         {isRetrying ? (
                           <span className="italic text-mid-gray">
-                            Re-transcribing…
+                            Re-transcribiendo…
                           </span>
                         ) : item.transcript ? (
                           item.transcript
                         ) : (
                           <span className="italic text-mid-gray">
-                            (no transcript)
+                            (sin transcripción)
                           </span>
                         )}
                       </div>
@@ -483,8 +484,8 @@ export function LibraryPage() {
                           Audio
                         </h4>
                         {[
-                          { label: "Microphone (YOU)", track: "mic" as const, file: "mic.wav" },
-                          { label: "System audio (THEM)", track: "system" as const, file: "system.wav" },
+                          { label: "Micrófono (TÚ)", track: "mic" as const, file: "mic.wav" },
+                          { label: "Audio del sistema (ELLOS)", track: "system" as const, file: "system.wav" },
                         ].map((s) => {
                           const join = (a: string, b: string) =>
                             a.endsWith("/") ? a + b : a + "/" + b;
@@ -535,8 +536,8 @@ export function LibraryPage() {
                         {item.kind === "meeting" &&
                         meetingViewMode === "dialog" &&
                         (item.chunks?.length ?? 0) > 0
-                          ? "Copy dialog"
-                          : "Copy transcript"}
+                          ? "Copiar diálogo"
+                          : "Copiar transcripción"}
                       </button>
 
                       {item.kind === "meeting" && (
@@ -546,12 +547,12 @@ export function LibraryPage() {
                             try {
                               const res = await (commands as any).cloudSyncMeeting(item.id);
                               if (res.status === "ok") {
-                                toast.success("Syncing meeting in background…");
+                                toast.success("Sincronizando reunión en segundo plano…");
                               } else {
-                                toast.error(`Sync failed: ${res.error}`);
+                                toast.error(`Error de sincronización: ${res.error}`);
                               }
                             } catch (e) {
-                              toast.error(`Sync failed: ${e}`);
+                              toast.error(`Error de sincronización: ${e}`);
                             } finally {
                               setSyncingIds((prev) => {
                                 const next = new Set(prev);
@@ -568,7 +569,7 @@ export function LibraryPage() {
                           ) : (
                             <Cloud className="w-3 h-3" />
                           )}
-                          {syncingIds.has(item.id) ? "Syncing…" : "Sync to cloud"}
+                          {syncingIds.has(item.id) ? "Sincronizando…" : "Sincronizar a la nube"}
                         </button>
                       )}
 
@@ -585,7 +586,7 @@ export function LibraryPage() {
                               className="w-3 h-3"
                               fill={item.saved ? "currentColor" : "none"}
                             />
-                            {item.saved ? "Saved" : "Save"}
+                            {item.saved ? "Guardado" : "Guardar"}
                           </button>
                           <button
                             onClick={() => handleRetry(item)}
@@ -597,7 +598,7 @@ export function LibraryPage() {
                                 "w-3 h-3 " + (isRetrying ? "animate-spin" : "")
                               }
                             />
-                            {isRetrying ? "Retrying…" : "Retry transcription"}
+                            {isRetrying ? "Reintentando…" : "Reintentar transcripción"}
                           </button>
                         </>
                       )}
@@ -617,13 +618,13 @@ function TypeChip({ kind }: { kind: LibraryKind }) {
   if (kind === "meeting") {
     return (
       <span className="shrink-0 text-[9px] font-bold tracking-widest uppercase py-0.5 px-1.5 rounded bg-lezat-sage/20 text-lezat-sage">
-        MEETING
+        REUNIÓN
       </span>
     );
   }
   return (
     <span className="shrink-0 text-[9px] font-bold tracking-widest uppercase py-0.5 px-1.5 rounded bg-logo-primary/15 text-logo-primary">
-      DICTATION
+      DICTADO
     </span>
   );
 }
