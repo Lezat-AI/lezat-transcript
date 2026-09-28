@@ -279,6 +279,9 @@ pub struct CloudLoginResult {
 
 // ─────────────────────────── client ──────────────────────────────
 
+/// How long to wait for the backend to process an uploaded meeting.
+const INGEST_TIMEOUT: Duration = Duration::from_secs(300);
+
 fn build_client() -> Result<Client> {
     Client::builder()
         .timeout(Duration::from_secs(30))
@@ -350,7 +353,13 @@ fn sync_meeting_to_cloud_inner(
         force_reprocess,
     };
 
-    let client = build_client()?;
+    // Processing a long meeting (task extraction, owners, boards) takes well
+    // over the default 30 s; timing out made the client retry a meeting that
+    // was still being processed.
+    let client = Client::builder()
+        .timeout(INGEST_TIMEOUT)
+        .build()
+        .map_err(|e| anyhow!("Failed to build HTTP client: {e}"))?;
     let backoff = [1, 3, 9]; // seconds
 
     for (attempt, delay_secs) in backoff.iter().enumerate() {
