@@ -47,6 +47,9 @@ struct DesktopMeetingPayload {
     is_daily: bool,
     #[serde(default)]
     force_reprocess: bool,
+    /// Per-source chunk outcomes (captured/silent/failed...), no content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_diagnostics: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -312,20 +315,30 @@ pub fn sync_meeting_to_cloud(
     settings: &AppSettings,
     record: &MeetingRecord,
 ) -> Result<IngestResponse> {
-    sync_meeting_to_cloud_inner(settings, record, false)
+    sync_meeting_to_cloud_inner(settings, record, false, None)
 }
 
 pub fn sync_meeting_to_cloud_force(
     settings: &AppSettings,
     record: &MeetingRecord,
 ) -> Result<IngestResponse> {
-    sync_meeting_to_cloud_inner(settings, record, true)
+    sync_meeting_to_cloud_inner(settings, record, true, None)
+}
+
+/// Like [`sync_meeting_to_cloud`], also sending the recording's diagnostics.
+pub fn sync_meeting_to_cloud_with_diagnostics(
+    settings: &AppSettings,
+    record: &MeetingRecord,
+    client_diagnostics: Option<serde_json::Value>,
+) -> Result<IngestResponse> {
+    sync_meeting_to_cloud_inner(settings, record, false, client_diagnostics)
 }
 
 fn sync_meeting_to_cloud_inner(
     settings: &AppSettings,
     record: &MeetingRecord,
     force_reprocess: bool,
+    client_diagnostics: Option<serde_json::Value>,
 ) -> Result<IngestResponse> {
     let url = format!("{}/api/desktop/ingest", base_url(settings)?);
     let key = api_key(settings)?;
@@ -351,6 +364,7 @@ fn sync_meeting_to_cloud_inner(
         app_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         is_daily: record.is_daily,
         force_reprocess,
+        client_diagnostics,
     };
 
     // Processing a long meeting (task extraction, owners, boards) takes well

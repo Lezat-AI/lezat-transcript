@@ -19,6 +19,7 @@ use log::{debug, error, info, warn};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -364,6 +365,29 @@ struct ActiveMeeting {
     stop_flag: Arc<AtomicBool>,
     /// One thread per capture source (mic, optionally system audio).
     handles: Vec<JoinHandle<()>>,
+    stats: MeetingStats,
+}
+
+/// What happened to each captured chunk of one source, sent to the backend as
+/// content-free diagnostics: without it a hole in the transcript can't be told
+/// apart from silence, a failed transcription or an empty result.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct SourceStats {
+    pub chunks_captured: u32,
+    pub audio_seconds: f64,
+    pub skipped_tiny: u32,
+    pub skipped_silent: u32,
+    pub transcribed: u32,
+    pub empty_text: u32,
+    pub failed: u32,
+}
+
+type MeetingStats = Arc<Mutex<BTreeMap<String, SourceStats>>>;
+
+fn record_stat(stats: &MeetingStats, source: &str, update: impl FnOnce(&mut SourceStats)) {
+    if let Ok(mut map) = stats.lock() {
+        update(map.entry(source.to_string()).or_default());
+    }
 }
 
 pub struct MeetingManager {
@@ -436,6 +460,7 @@ impl MeetingManager {
         };
 
         let stop_flag = Arc::new(AtomicBool::new(false));
+        let stats: MeetingStats = Arc::default();
         let mut handles = Vec::new();
 
         // Always spawn the microphone loop (cpal).
@@ -451,6 +476,7 @@ impl MeetingManager {
             "mic".to_string(),
             mic_capture,
             mic_wav_path,
+            stats.clone(),
         )?);
 
         // Optionally spawn the system-audio loop.
@@ -484,6 +510,7 @@ impl MeetingManager {
                                 "system".to_string(),
                                 capture,
                                 sys_wav_path,
+                                stats.clone(),
                             )?)
                         }
                         Err(e) => {
@@ -522,6 +549,7 @@ impl MeetingManager {
             started: Instant::now(),
             stop_flag,
             handles,
+            stats,
         });
 
         let _ = (MeetingStateEvent::Started {
@@ -560,6 +588,7 @@ impl MeetingManager {
         let store = self.store.clone();
         let app = self.app.clone();
         thread::spawn(move || {
+            let active_stats = active.stats.clone();
             // Wait for recording threads to finish (may block briefly if
             // a transcription was already in flight when stop was signalled).
             for h in active.handles {
@@ -606,7 +635,18 @@ impl MeetingManager {
                 use crate::cloud_sync;
                 let _ = (cloud_sync::CloudSyncEvent::Syncing { meeting_id }).emit(&app);
 
-                match cloud_sync::sync_meeting_to_cloud(&settings, &record) {
+                let diagnostics = serde_json::json!({
+                    "app_version": env!("CARGO_PKG_VERSION"),
+                    "os": std::env::consts::OS,
+                    "transcription_mode": format!("{:?}", settings.transcription_mode).to_lowercase(),
+                    "capture_system_audio": settings.capture_system_audio,
+                    "sources": active_stats.lock().map(|m| m.clone()).unwrap_or_default(),
+                });
+                match cloud_sync::sync_meeting_to_cloud_with_diagnostics(
+                    &settings,
+                    &record,
+                    Some(diagnostics),
+                ) {
                     Ok(resp) => {
                         info!(
                             "Meeting {} synced to cloud: {}",
@@ -692,12 +732,13 @@ fn spawn_recording_loop(
     source: String,
     capture: SourceCapture,
     wav_path: Option<PathBuf>,
+    stats: MeetingStats,
 ) -> Result<JoinHandle<()>> {
     let handle = thread::Builder::new()
         .name(format!("meeting-{meeting_id}-{source}"))
         .spawn(move || {
             if let Err(e) = run_recording_loop(
-                &app, &store, meeting_id, &stop_flag, &source, capture, wav_path,
+                &app, &store, meeting_id, &stop_flag, &source, capture, wav_path, &stats,
             ) {
                 error!("Meeting {meeting_id} [{source}] recording loop failed: {e}");
                 let _ = (MeetingStateEvent::Error {
@@ -764,6 +805,7 @@ fn run_recording_loop(
     source: &str,
     mut recorder: SourceCapture,
     wav_path: Option<PathBuf>,
+    stats: &MeetingStats,
 ) -> Result<()> {
     info!("Meeting {meeting_id} [{source}]: recorder opened, starting capture loop");
 
@@ -798,11 +840,14 @@ fn run_recording_loop(
         let app = app.clone();
         let store = store.clone();
         let source = source.to_string();
+        let stats = stats.clone();
         thread::Builder::new()
             .name(format!("meeting-{meeting_id}-{source}-transcribe"))
             .spawn(move || {
                 for (offset_ms, samples) in chunk_rx {
-                    transcribe_chunk(&app, &store, meeting_id, &source, offset_ms, samples);
+                    transcribe_chunk(
+                        &app, &store, meeting_id, &source, offset_ms, samples, &stats,
+                    );
                 }
             })?
     };
@@ -856,8 +901,14 @@ fn run_recording_loop(
             }
         }
 
+        record_stat(stats, source, |s| {
+            s.chunks_captured += 1;
+            s.audio_seconds += samples.len() as f64 / 16_000.0;
+        });
+
         // Short chunk (<400ms) is almost always start/stop overhead, skip it.
         if samples.len() < 16_000 / 3 {
+            record_stat(stats, source, |s| s.skipped_tiny += 1);
             debug!(
                 "Meeting {meeting_id} [{source}]: skipping tiny chunk ({} samples)",
                 samples.len()
@@ -911,12 +962,14 @@ fn transcribe_chunk(
     source: &str,
     offset_ms: u64,
     samples: Vec<f32>,
+    stats: &MeetingStats,
 ) {
     // Run VAD on the chunk to avoid sending silence to Whisper, which causes
     // hallucinations (e.g. "Thank you for watching!", YouTube intros, etc.).
     let ratio = speech_ratio(app, &samples);
     if ratio < MIN_SPEECH_RATIO {
         debug!("Meeting {meeting_id} [{source}]: skipping silent chunk (speech ratio {ratio:.2})");
+        record_stat(stats, source, |s| s.skipped_silent += 1);
         return;
     }
 
@@ -926,6 +979,7 @@ fn transcribe_chunk(
     // double the GPU/CPU load and OOM on low-end hardware.
     let Some(transcription_manager) = app.try_state::<Arc<TranscriptionManager>>() else {
         warn!("TranscriptionManager not yet registered; skipping chunk");
+        record_stat(stats, source, |s| s.failed += 1);
         return;
     };
 
@@ -933,8 +987,10 @@ fn transcribe_chunk(
         Ok(text) => {
             let cleaned = text.trim().to_string();
             if cleaned.is_empty() {
+                record_stat(stats, source, |s| s.empty_text += 1);
                 return;
             }
+            record_stat(stats, source, |s| s.transcribed += 1);
             let chunk = MeetingChunk {
                 offset_ms,
                 source: source.to_string(),
@@ -947,6 +1003,7 @@ fn transcribe_chunk(
         }
         Err(e) => {
             error!("Transcription failed for meeting {meeting_id} [{source}]: {e}");
+            record_stat(stats, source, |s| s.failed += 1);
         }
     }
 }
