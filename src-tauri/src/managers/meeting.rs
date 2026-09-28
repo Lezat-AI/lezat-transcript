@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -550,6 +550,11 @@ impl MeetingManager {
         active.stop_flag.store(true, Ordering::SeqCst);
         drop(slot);
 
+        // Measure now: joining below waits for the last chunk's transcription,
+        // which is not part of the meeting.
+        let duration_ms = active.started.elapsed().as_millis() as i64;
+        let ended_at = Utc::now().timestamp();
+
         // Move the heavy join + finalize work to a background thread so the
         // calling Tauri command returns instantly.
         let store = self.store.clone();
@@ -561,8 +566,6 @@ impl MeetingManager {
                 let _ = h.join();
             }
 
-            let duration_ms = active.started.elapsed().as_millis() as i64;
-            let ended_at = Utc::now().timestamp();
             if let Err(e) = store.finalize(meeting_id, ended_at, duration_ms) {
                 error!("Failed to finalize meeting {meeting_id}: {e}");
             }
@@ -715,12 +718,10 @@ fn speech_ratio(app: &AppHandle, samples: &[f32]) -> f32 {
         return 0.0;
     }
 
-    let vad_path = match app
-        .path()
-        .resolve(
-            "resources/models/silero_vad_v4.onnx",
-            tauri::path::BaseDirectory::Resource,
-        ) {
+    let vad_path = match app.path().resolve(
+        "resources/models/silero_vad_v4.onnx",
+        tauri::path::BaseDirectory::Resource,
+    ) {
         Ok(p) => p,
         Err(e) => {
             warn!("Could not resolve VAD model path: {e}");
@@ -788,16 +789,43 @@ fn run_recording_loop(
         }
     }
 
-    let chunk_start = Instant::now();
-    let mut offset_ms_at_chunk_start: u64 = 0;
+    // Transcription runs on its own thread so capture restarts right after each
+    // rollover. Transcribing inline used to leave the recorder stopped for the
+    // whole transcription (~2 s with cloud mode), dropping speech at every
+    // chunk boundary.
+    let (chunk_tx, chunk_rx) = mpsc::channel::<(u64, Vec<f32>)>();
+    let worker = {
+        let app = app.clone();
+        let store = store.clone();
+        let source = source.to_string();
+        thread::Builder::new()
+            .name(format!("meeting-{meeting_id}-{source}-transcribe"))
+            .spawn(move || {
+                for (offset_ms, samples) in chunk_rx {
+                    transcribe_chunk(&app, &store, meeting_id, &source, offset_ms, samples);
+                }
+            })?
+    };
 
-    while !stop_flag.load(Ordering::SeqCst) {
-        // Begin a new chunk window.
-        if let Err(e) = recorder.start() {
-            warn!("recorder.start failed: {e}");
-            thread::sleep(Duration::from_millis(200));
-            continue;
-        }
+    let meeting_start = Instant::now();
+    // `Some(offset)` while the recorder is capturing a chunk that began at `offset`.
+    let mut chunk_offset_ms: Option<u64> = None;
+
+    loop {
+        let offset_ms = match chunk_offset_ms {
+            Some(offset) => offset,
+            None => {
+                if stop_flag.load(Ordering::SeqCst) {
+                    break;
+                }
+                if let Err(e) = recorder.start() {
+                    warn!("recorder.start failed: {e}");
+                    thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+                meeting_start.elapsed().as_millis() as u64
+            }
+        };
 
         // Sleep until it's time to roll over (or until stop is requested).
         let deadline = Instant::now() + Duration::from_secs(CHUNK_SECONDS);
@@ -810,13 +838,23 @@ fn run_recording_loop(
             Ok(s) => s,
             Err(e) => {
                 warn!("recorder.stop failed: {e}");
+                chunk_offset_ms = None;
                 thread::sleep(Duration::from_millis(200));
                 continue;
             }
         };
 
-        let this_chunk_offset_ms = offset_ms_at_chunk_start;
-        offset_ms_at_chunk_start = chunk_start.elapsed().as_millis() as u64;
+        // Restart capture before doing anything else with the samples, so the
+        // only audio lost between chunks is the rollover pause.
+        let stopping = stop_flag.load(Ordering::SeqCst);
+        chunk_offset_ms = None;
+        if !stopping {
+            thread::sleep(CHUNK_ROLLOVER_PAUSE);
+            match recorder.start() {
+                Ok(()) => chunk_offset_ms = Some(meeting_start.elapsed().as_millis() as u64),
+                Err(e) => warn!("recorder.start failed: {e}"),
+            }
+        }
 
         // Short chunk (<400ms) is almost always start/stop overhead, skip it.
         if samples.len() < 16_000 / 3 {
@@ -824,16 +862,12 @@ fn run_recording_loop(
                 "Meeting {meeting_id} [{source}]: skipping tiny chunk ({} samples)",
                 samples.len()
             );
-            if !stop_flag.load(Ordering::SeqCst) {
-                thread::sleep(CHUNK_ROLLOVER_PAUSE);
-            }
             continue;
         }
 
         // Persist to the per-source WAV if audio saving is enabled. Convert
         // f32 samples in [-1, 1] to signed 16-bit PCM with clipping. Samples
-        // lost between stop() and restart() (the ~30 ms rollover) aren't
-        // written — the saved audio will have brief gaps at chunk boundaries.
+        // lost during the ~30 ms rollover aren't written.
         if let Some(w) = wav_writer.as_mut() {
             for &s in &samples {
                 let clamped = s.max(-1.0).min(1.0);
@@ -845,66 +879,18 @@ fn run_recording_loop(
             }
         }
 
-        // If stop was requested while we were draining/saving audio, skip
-        // transcription entirely so the thread exits fast and join() in
-        // MeetingManager::stop() doesn't block the UI for seconds.
-        if stop_flag.load(Ordering::SeqCst) {
-            debug!(
-                "Meeting {meeting_id} [{source}]: stop requested, skipping final chunk transcription"
-            );
-            break;
+        // The final chunk (captured up to the moment stop was pressed) is
+        // transcribed too; MeetingManager::stop() joins off the UI thread.
+        if chunk_tx.send((offset_ms, samples)).is_err() {
+            warn!("Meeting {meeting_id} [{source}]: transcription worker exited early");
         }
+    }
 
-        // Run VAD on the chunk to avoid sending silence to Whisper, which
-        // causes hallucinations (e.g. "Thank you for watching!", YouTube
-        // intros, etc.).
-        let ratio = speech_ratio(app, &samples);
-        if ratio < MIN_SPEECH_RATIO {
-            debug!(
-                "Meeting {meeting_id} [{source}]: skipping silent chunk (speech ratio {ratio:.2})"
-            );
-            if !stop_flag.load(Ordering::SeqCst) {
-                thread::sleep(CHUNK_ROLLOVER_PAUSE);
-            }
-            continue;
-        }
-
-        // Transcribe on THIS thread (one chunk at a time per source). The
-        // TranscriptionManager serialises internally — when two meeting
-        // threads call it concurrently they queue on its mutex. That's
-        // intentional: running the Whisper engine in two parallel lanes
-        // would double the GPU/CPU load and OOM on low-end hardware.
-        let transcription_manager = match app.try_state::<Arc<TranscriptionManager>>() {
-            Some(tm) => tm.inner().clone(),
-            None => {
-                warn!("TranscriptionManager not yet registered; skipping chunk");
-                continue;
-            }
-        };
-
-        match transcription_manager.transcribe(samples) {
-            Ok(text) => {
-                let cleaned = text.trim().to_string();
-                if !cleaned.is_empty() {
-                    let chunk = MeetingChunk {
-                        offset_ms: this_chunk_offset_ms,
-                        source: source.to_string(),
-                        text: cleaned,
-                    };
-                    if let Err(e) = store.append_chunk(meeting_id, &chunk) {
-                        error!("Failed to persist chunk: {e}");
-                    }
-                    let _ = (MeetingTranscriptChunkEvent { meeting_id, chunk }).emit(app);
-                }
-            }
-            Err(e) => {
-                error!("Transcription failed for meeting {meeting_id} [{source}]: {e}");
-            }
-        }
-
-        if !stop_flag.load(Ordering::SeqCst) {
-            thread::sleep(CHUNK_ROLLOVER_PAUSE);
-        }
+    // Let the worker finish the queued chunks before the meeting is finalized
+    // and synced.
+    drop(chunk_tx);
+    if worker.join().is_err() {
+        error!("Meeting {meeting_id} [{source}]: transcription worker panicked");
     }
 
     let _ = recorder.close();
@@ -915,4 +901,52 @@ fn run_recording_loop(
     }
     info!("Meeting {meeting_id} [{source}]: recording loop exited cleanly");
     Ok(())
+}
+
+/// VAD-gate and transcribe one chunk, then persist and emit it.
+fn transcribe_chunk(
+    app: &AppHandle,
+    store: &Arc<MeetingsStore>,
+    meeting_id: i64,
+    source: &str,
+    offset_ms: u64,
+    samples: Vec<f32>,
+) {
+    // Run VAD on the chunk to avoid sending silence to Whisper, which causes
+    // hallucinations (e.g. "Thank you for watching!", YouTube intros, etc.).
+    let ratio = speech_ratio(app, &samples);
+    if ratio < MIN_SPEECH_RATIO {
+        debug!("Meeting {meeting_id} [{source}]: skipping silent chunk (speech ratio {ratio:.2})");
+        return;
+    }
+
+    // The TranscriptionManager serialises internally — when two meeting
+    // sources call it concurrently they queue on its mutex. That's
+    // intentional: running the Whisper engine in two parallel lanes would
+    // double the GPU/CPU load and OOM on low-end hardware.
+    let Some(transcription_manager) = app.try_state::<Arc<TranscriptionManager>>() else {
+        warn!("TranscriptionManager not yet registered; skipping chunk");
+        return;
+    };
+
+    match transcription_manager.inner().transcribe(samples) {
+        Ok(text) => {
+            let cleaned = text.trim().to_string();
+            if cleaned.is_empty() {
+                return;
+            }
+            let chunk = MeetingChunk {
+                offset_ms,
+                source: source.to_string(),
+                text: cleaned,
+            };
+            if let Err(e) = store.append_chunk(meeting_id, &chunk) {
+                error!("Failed to persist chunk: {e}");
+            }
+            let _ = (MeetingTranscriptChunkEvent { meeting_id, chunk }).emit(app);
+        }
+        Err(e) => {
+            error!("Transcription failed for meeting {meeting_id} [{source}]: {e}");
+        }
+    }
 }
