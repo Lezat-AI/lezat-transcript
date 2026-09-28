@@ -17,6 +17,7 @@
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "check:translations": "bun scripts/check-translations.ts",
+    "test:e2e:connections": "bun scripts/e2e-connections.ts",
     "postinstall": "true"
   },
   "dependencies": {
