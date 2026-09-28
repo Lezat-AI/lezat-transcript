@@ -75,6 +75,25 @@ pub struct CloudActionItem {
     pub meeting_title: Option<String>,
     pub description: Option<String>,
     pub assignee: Option<String>,
+    /// Notion user the backend resolved the owner to, if any.
+    #[serde(default)]
+    pub assignee_notion_user_id: Option<String>,
+    /// Task title (older backends only send it in `meeting_title`).
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Title of the meeting the task came from.
+    #[serde(default)]
+    pub meeting_name: Option<String>,
+    /// How sure the backend is about the owner: "high" | "medium" | "low".
+    #[serde(default)]
+    pub assignee_confidence: Option<String>,
+    /// Notion board suggested for the task, with the reason.
+    #[serde(default)]
+    pub notion_database_id: Option<String>,
+    #[serde(default)]
+    pub notion_database_title: Option<String>,
+    #[serde(default)]
+    pub notion_database_reason: Option<String>,
     pub due_date: Option<String>,
     #[serde(default = "default_task_type")]
     pub task_type: String,
@@ -140,6 +159,15 @@ pub struct IntegrationsStatusResponse {
 pub struct NotionDatabase {
     pub id: String,
     pub name: String,
+}
+
+/// A Notion workspace person that can own a task (members and board guests).
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct NotionPerson {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Type)]
@@ -679,6 +707,32 @@ pub fn disconnect_integration(settings: &AppSettings, provider: &str) -> Result<
 }
 
 /// Fetch Notion databases the user has access to.
+/// Fetch the people a task can be assigned to in the user's Notion workspace.
+pub fn fetch_notion_users(settings: &AppSettings) -> Result<Vec<NotionPerson>> {
+    let url = format!(
+        "{}/api/desktop/integrations/notion/users",
+        base_url(settings)?
+    );
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .get(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        return Err(anyhow!("Failed to fetch Notion users (HTTP {status})"));
+    }
+    let mut people: Vec<NotionPerson> = resp
+        .json::<Vec<NotionPerson>>()
+        .map_err(|e| anyhow!("Failed to parse Notion users: {e}"))?
+        .into_iter()
+        .filter(|p| !p.id.is_empty() && !p.name.trim().is_empty())
+        .collect();
+    people.sort_by_key(|p| p.name.to_lowercase());
+    Ok(people)
+}
+
 pub fn fetch_notion_databases(settings: &AppSettings) -> Result<Vec<NotionDatabase>> {
     let url = format!(
         "{}/api/desktop/integrations/notion/databases",

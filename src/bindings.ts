@@ -1069,6 +1069,14 @@ async cloudGetNotionDatabases() : Promise<Result<NotionDatabase[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async cloudGetNotionUsers() : Promise<Result<NotionPerson[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_notion_users") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cloudGetMondayBoards() : Promise<Result<MondayBoard[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cloud_get_monday_boards") };
@@ -1257,8 +1265,10 @@ async timesheetAiSuggest(taskDescriptions: string[], projectsJson: string) : Pro
 }
 },
 /**
- * Stub implementation for non-macOS platforms
- * Always returns false since laptop detection is macOS-specific
+ * Checks if the Mac is a laptop by detecting battery presence
+ * 
+ * This uses pmset to check for battery information.
+ * Returns true if a battery is detected (laptop), false otherwise (desktop)
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -1375,7 +1385,27 @@ export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
-export type CloudActionItem = { id: string; meeting_id: string | null; meeting_title: string | null; description: string | null; assignee: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null }
+export type CloudActionItem = { id: string; meeting_id: string | null; meeting_title: string | null; description: string | null; assignee: string | null; 
+/**
+ * Notion user the backend resolved the owner to, if any.
+ */
+assignee_notion_user_id?: string | null; 
+/**
+ * Task title (older backends only send it in `meeting_title`).
+ */
+title?: string | null; 
+/**
+ * Title of the meeting the task came from.
+ */
+meeting_name?: string | null; 
+/**
+ * How sure the backend is about the owner: "high" | "medium" | "low".
+ */
+assignee_confidence?: string | null; 
+/**
+ * Notion board suggested for the task, with the reason.
+ */
+notion_database_id?: string | null; notion_database_title?: string | null; notion_database_reason?: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null }
 export type CloudActionItemsResponse = { items: CloudActionItem[] }
 export type CloudLoginResult = { user_email: string; user_name: string; api_key: string }
 export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state: "success"; meeting_id: number; remote_id: string } | { state: "failed"; meeting_id: number; error: string }
@@ -1423,6 +1453,10 @@ export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 export type MondayBoard = { id: string; name: string }
 export type NotionDatabase = { id: string; name: string }
+/**
+ * A Notion workspace person that can own a task (members and board guests).
+ */
+export type NotionPerson = { id: string; name: string; email?: string | null }
 export type OAuthConnectResponse = { oauth_url: string; state: string | null }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "none" | "top" | "bottom"

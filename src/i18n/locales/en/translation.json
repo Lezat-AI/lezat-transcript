@@ -717,7 +717,12 @@
       "confirm": "Confirm & Approve",
       "confirming": "Approving...",
       "noDescription": "No description",
-      "dateRequired": "{{count}} task(s) need a due date to sync to calendar"
+      "dateRequired": "{{count}} task(s) need a due date to sync to calendar",
+      "noAssignee": "No owner",
+      "notInNotion": "{{name}} (not in Notion)",
+      "notInNotionHint": "Pick the Notion person so the card gets an owner.",
+      "board": "Notion board",
+      "defaultBoard": "Default ({{name}})"
     },
     "previousTask": "Previous task",
     "loadMore": "Show more meetings ({{remaining}} remaining)"

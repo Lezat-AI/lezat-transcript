@@ -717,7 +717,12 @@
       "confirm": "Confirmar y Aprobar",
       "confirming": "Aprobando...",
       "noDescription": "Sin descripción",
-      "dateRequired": "{{count}} tarea(s) necesitan una fecha límite para sincronizar con el calendario"
+      "dateRequired": "{{count}} tarea(s) necesitan una fecha límite para sincronizar con el calendario",
+      "noAssignee": "Sin responsable",
+      "notInNotion": "{{name}} (no está en Notion)",
+      "notInNotionHint": "Elige a la persona de Notion para que quede asignada en la tarjeta.",
+      "board": "Tablero de Notion",
+      "defaultBoard": "Por defecto ({{name}})"
     },
     "previousTask": "Tarea anterior",
     "loadMore": "Mostrar más reuniones ({{remaining}} restantes)"

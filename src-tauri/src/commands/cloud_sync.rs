@@ -91,8 +91,7 @@ pub async fn cloud_update_action_item(
     edits_json: Option<String>,
 ) -> Result<(), String> {
     let s = settings::get_settings(&app);
-    let edits = edits_json
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let edits = edits_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
     tokio::task::spawn_blocking(move || {
         cloud_sync::update_action_item(&s, &item_id, &status, edits).map_err(|e| e.to_string())
     })
@@ -251,6 +250,19 @@ pub async fn cloud_get_notion_databases(
     let s = settings::get_settings(&app);
     tokio::task::spawn_blocking(move || {
         cloud_sync::fetch_notion_databases(&s).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_get_notion_users(
+    app: AppHandle,
+) -> Result<Vec<cloud_sync::NotionPerson>, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::fetch_notion_users(&s).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?

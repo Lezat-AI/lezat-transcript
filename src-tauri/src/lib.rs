@@ -463,6 +463,7 @@ pub fn run(cli_args: CliArgs) {
             commands::cloud_sync::cloud_login_google,
             commands::cloud_sync::cloud_get_daily_reports,
             commands::cloud_sync::cloud_get_notion_databases,
+            commands::cloud_sync::cloud_get_notion_users,
             commands::cloud_sync::cloud_get_monday_boards,
             commands::cloud_sync::cloud_get_notion_status_options,
             commands::cloud_sync::cloud_get_monday_status_options,

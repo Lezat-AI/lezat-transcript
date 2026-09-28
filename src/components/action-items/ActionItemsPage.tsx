@@ -9,6 +9,14 @@ interface CloudActionItem {
   meeting_title: string | null;
   description: string | null;
   assignee: string | null;
+  assignee_notion_user_id?: string | null;
+  // Newer backends send the task title and meeting name separately (older ones
+  // put the task title in meeting_title).
+  title?: string | null;
+  meeting_name?: string | null;
+  notion_database_id?: string | null;
+  notion_database_title?: string | null;
+  notion_database_reason?: string | null;
   due_date: string | null;
   task_type: string;
   status: string;
@@ -27,6 +35,35 @@ interface IntegrationInfo {
 }
 
 interface SelectOption { id: string; name: string }
+
+interface NotionPersonOption { id: string; name: string; email?: string | null }
+
+/** Edits sent when approving; owner fields travel together when picked from Notion. */
+interface ItemEdits {
+  description?: string;
+  assignee?: string;
+  assignee_notion_user_id?: string;
+  assignee_email?: string;
+  due_date?: string;
+  notion_database_id?: string;
+}
+
+const normalizePersonName = (value: string) =>
+  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+/** The Notion person a free-text owner refers to: exact name, else a unique partial match. */
+function findNotionPerson(name: string, people: NotionPersonOption[]): NotionPersonOption | undefined {
+  const wanted = normalizePersonName(name);
+  if (!wanted) return undefined;
+  const exact = people.filter((p) => normalizePersonName(p.name) === wanted);
+  if (exact.length > 0) return exact.length === 1 ? exact[0] : undefined;
+  const tokens = wanted.split(" ");
+  const partial = people.filter((p) => {
+    const personTokens = normalizePersonName(p.name).split(" ");
+    return tokens.every((t) => personTokens.includes(t));
+  });
+  return partial.length === 1 ? partial[0] : undefined;
+}
 
 import {
   CheckCircle2,
@@ -66,6 +103,7 @@ interface PreloadedConfig {
   mondayBoards: SelectOption[];
   notionStatuses: Record<string, SelectOption[]>; // keyed by database_id
   mondayStatuses: Record<string, SelectOption[]>; // keyed by board_id
+  notionPeople: NotionPersonOption[];
 }
 
 // ─── Timesheet Dialog ───────────────────────────────────────────
@@ -583,11 +621,20 @@ function BulkApprovalBar({
 
 interface EditableItem {
   id: string;
+  title: string;
   description: string;
+  notion_database_id: string;
+  notion_database_reason: string;
   assignee: string;
+  assignee_notion_user_id: string;
+  assignee_email: string;
   due_date: string;
   meeting_title: string;
 }
+
+// Select values that aren't Notion user ids.
+const NO_ASSIGNEE = "";
+const UNLINKED_ASSIGNEE = "__unlinked__";
 
 function ApprovalReviewModal({
   items,
@@ -599,18 +646,28 @@ function ApprovalReviewModal({
   items: CloudActionItem[];
   integrations: IntegrationInfo[];
   config: PreloadedConfig;
-  onConfirm: (edits: Record<string, { description?: string; assignee?: string; due_date?: string }>, integrationSettings: Record<string, string>, syncTargets: string[]) => void;
+  onConfirm: (edits: Record<string, ItemEdits>, integrationSettings: Record<string, string>, syncTargets: string[]) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
   const [editableItems, setEditableItems] = useState<EditableItem[]>(() =>
-    items.map((i) => ({
-      id: i.id,
-      description: i.description ?? "",
-      assignee: i.assignee ?? "",
-      due_date: i.due_date ?? "",
-      meeting_title: i.meeting_title ?? t("actionItems.untitledMeeting"),
-    })),
+    items.map((i) => {
+      const linked =
+        config.notionPeople.find((p) => p.id === i.assignee_notion_user_id) ??
+        (i.assignee ? findNotionPerson(i.assignee, config.notionPeople) : undefined);
+      return {
+        id: i.id,
+        title: i.title ?? "",
+        description: i.description ?? "",
+        notion_database_id: i.notion_database_id ?? "",
+        notion_database_reason: i.notion_database_reason ?? "",
+        assignee: linked?.name ?? i.assignee ?? "",
+        assignee_notion_user_id: linked?.id ?? "",
+        assignee_email: linked?.email ?? "",
+        due_date: i.due_date ?? "",
+        meeting_title: i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
+      };
+    }),
   );
   const [submitting, setSubmitting] = useState(false);
 
@@ -638,16 +695,44 @@ function ApprovalReviewModal({
     );
   };
 
+  const selectAssignee = (id: string, value: string) => {
+    if (value === UNLINKED_ASSIGNEE) return;
+    const person = config.notionPeople.find((p) => p.id === value);
+    setEditableItems((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              assignee: person?.name ?? "",
+              assignee_notion_user_id: person?.id ?? "",
+              assignee_email: person?.email ?? "",
+            }
+          : item,
+      ),
+    );
+  };
+
   const handleConfirm = () => {
     setSubmitting(true);
-    const edits: Record<string, { description?: string; assignee?: string; due_date?: string }> = {};
+    const edits: Record<string, ItemEdits> = {};
     for (const edited of editableItems) {
       const original = items.find((i) => i.id === edited.id);
       if (!original) continue;
-      const changed: { description?: string; assignee?: string; due_date?: string } = {};
+      const changed: ItemEdits = {};
       if (edited.description !== (original.description ?? "")) changed.description = edited.description;
-      if (edited.assignee !== (original.assignee ?? "")) changed.assignee = edited.assignee;
+      if (edited.assignee_notion_user_id !== (original.assignee_notion_user_id ?? "")) {
+        // Send the Notion user itself, not just its name, so the card gets the owner.
+        changed.assignee = edited.assignee;
+        changed.assignee_notion_user_id = edited.assignee_notion_user_id;
+        changed.assignee_email = edited.assignee_email;
+      } else if (edited.assignee !== (original.assignee ?? "")) {
+        changed.assignee = edited.assignee;
+      }
       if (edited.due_date !== (original.due_date ?? "")) changed.due_date = edited.due_date;
+      // Each task goes to its own board: the suggested/picked one, else the default below.
+      if (targets.has("notion") && (edited.notion_database_id || notionDbId)) {
+        changed.notion_database_id = edited.notion_database_id || notionDbId;
+      }
       if (Object.keys(changed).length > 0) edits[edited.id] = changed;
     }
     const integrationSettings: Record<string, string> = {};
@@ -711,6 +796,7 @@ function ApprovalReviewModal({
               <div className="flex flex-col gap-3">
                 {meetingItems.map((item) => (
                   <div key={item.id} className="rounded-lg border border-mid-gray/15 p-3 flex flex-col gap-2">
+                    {item.title && <p className="text-sm font-medium">{item.title}</p>}
                     {/* Description */}
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
@@ -730,13 +816,72 @@ function ApprovalReviewModal({
                         <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
                           {t("actionItems.review.assignee")}
                         </label>
-                        <input
-                          type="text"
-                          value={item.assignee}
-                          onChange={(e) => updateItem(item.id, "assignee", e.target.value)}
-                          className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-transparent focus:outline-none focus:border-lezat-sage/50"
-                        />
+                        {config.notionPeople.length > 0 ? (
+                          <>
+                            <select
+                              value={
+                                item.assignee_notion_user_id ||
+                                (item.assignee ? UNLINKED_ASSIGNEE : NO_ASSIGNEE)
+                              }
+                              onChange={(e) => selectAssignee(item.id, e.target.value)}
+                              className={`w-full px-2.5 py-1.5 text-sm rounded-md border bg-background focus:outline-none ${
+                                item.assignee && !item.assignee_notion_user_id
+                                  ? "border-amber-500/50 focus:border-amber-500"
+                                  : "border-mid-gray/15 focus:border-lezat-sage/50"
+                              }`}
+                            >
+                              <option value={NO_ASSIGNEE}>{t("actionItems.review.noAssignee")}</option>
+                              {item.assignee && !item.assignee_notion_user_id && (
+                                <option value={UNLINKED_ASSIGNEE}>
+                                  {t("actionItems.review.notInNotion", { name: item.assignee })}
+                                </option>
+                              )}
+                              {config.notionPeople.map((person) => (
+                                <option key={person.id} value={person.id}>{person.name}</option>
+                              ))}
+                            </select>
+                            {item.assignee && !item.assignee_notion_user_id && (
+                              <span className="text-[10px] text-amber-500">
+                                {t("actionItems.review.notInNotionHint")}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <input
+                            type="text"
+                            value={item.assignee}
+                            onChange={(e) => updateItem(item.id, "assignee", e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-transparent focus:outline-none focus:border-lezat-sage/50"
+                          />
+                        )}
                       </div>
+                      {targets.has("notion") && config.notionDbs.length > 0 && (
+                        <div className="flex-1 flex flex-col gap-1">
+                          <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
+                            {t("actionItems.review.board")}
+                          </label>
+                          <select
+                            value={item.notion_database_id}
+                            onChange={(e) => {
+                              updateItem(item.id, "notion_database_id", e.target.value);
+                              updateItem(item.id, "notion_database_reason", "");
+                            }}
+                            className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-background focus:outline-none focus:border-lezat-sage/50"
+                          >
+                            <option value="">
+                              {t("actionItems.review.defaultBoard", {
+                                name: config.notionDbs.find((db) => db.id === notionDbId)?.name ?? "—",
+                              })}
+                            </option>
+                            {config.notionDbs.map((db) => (
+                              <option key={db.id} value={db.id}>{db.name}</option>
+                            ))}
+                          </select>
+                          {item.notion_database_reason && (
+                            <span className="text-[10px] text-mid-gray">{item.notion_database_reason}</span>
+                          )}
+                        </div>
+                      )}
                       <div className="flex-1 flex flex-col gap-1">
                         <label className={`text-[10px] font-medium uppercase tracking-wide ${
                           itemsMissingDate.includes(item.id) ? "text-red-500" : "text-mid-gray"
@@ -879,8 +1024,11 @@ const ActionItemRow = React.memo(function ActionItemRow({
         <p className={`text-sm leading-relaxed ${
           item.status === "completed" ? "line-through opacity-50" : ""
         }`}>
-          {item.description ?? "—"}
+          {item.title || item.description || "—"}
         </p>
+        {item.title && item.description && (
+          <p className="text-xs text-mid-gray leading-relaxed line-clamp-2">{item.description}</p>
+        )}
         <div className="flex items-center gap-2 mt-1 text-[11px] text-mid-gray flex-wrap">
           {item.task_type === "completed_previous" && !hasTimesheetEntry && (
             <span className="px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium">
@@ -909,6 +1057,11 @@ const ActionItemRow = React.memo(function ActionItemRow({
           )}
           {item.assignee && <span className="px-1.5 py-0.5 rounded bg-mid-gray/8">{item.assignee}</span>}
           {item.due_date && <span>{item.due_date}</span>}
+          {isPending && item.notion_database_title && (
+            <span className="px-1.5 py-0.5 rounded bg-mid-gray/8" title={item.notion_database_reason ?? undefined}>
+              {item.notion_database_title}
+            </span>
+          )}
           {item.synced_to.map((s: string) => (
             <span key={s} className="px-1.5 py-0.5 rounded-full bg-lezat-sage/15 text-lezat-sage text-[10px] font-medium">{s}</span>
           ))}
@@ -1041,7 +1194,7 @@ export const ActionItemsPage: React.FC = () => {
   // Pre-loaded config (fetched once on mount, shared with all panels)
   const [preloaded, setPreloaded] = useState<PreloadedConfig>({
     notionDbs: [], mondayBoards: [],
-    notionStatuses: {}, mondayStatuses: {},
+    notionStatuses: {}, mondayStatuses: {}, notionPeople: [],
   });
 
   const isConfigured = settings?.cloud_sync_url && settings?.cloud_sync_api_key;
@@ -1075,12 +1228,17 @@ export const ActionItemsPage: React.FC = () => {
   // Phase 2: Pre-load config in the background (doesn't block UI)
   useEffect(() => {
     if (integrations.length === 0) return;
-    const cfg: PreloadedConfig = { notionDbs: [], mondayBoards: [], notionStatuses: {}, mondayStatuses: {} };
+    const cfg: PreloadedConfig = { notionDbs: [], mondayBoards: [], notionStatuses: {}, mondayStatuses: {}, notionPeople: [] };
 
     const notion = integrations.find((i) => i.provider === "notion" && i.connected);
 
     const promises: Promise<void>[] = [];
     if (notion) {
+      promises.push(
+        commands.cloudGetNotionUsers().then((r) => {
+          if (r.status === "ok") cfg.notionPeople = r.data;
+        }).catch(() => {}),
+      );
       promises.push(
         (commands as any).cloudGetNotionDatabases().then(async (r: any) => {
           if (r.status === "ok") {
@@ -1108,7 +1266,8 @@ export const ActionItemsPage: React.FC = () => {
       const key = item.meeting_id ?? "unknown";
       if (!map.has(key)) {
         map.set(key, {
-          meeting_id: key, meeting_title: item.meeting_title ?? t("actionItems.untitledMeeting"),
+          meeting_id: key,
+          meeting_title: item.meeting_name ?? item.meeting_title ?? t("actionItems.untitledMeeting"),
           items: [], completed: 0, total: 0,
         });
       }
@@ -1184,7 +1343,7 @@ export const ActionItemsPage: React.FC = () => {
   };
 
   const handleReviewConfirm = async (
-    edits: Record<string, { description?: string; assignee?: string; due_date?: string }>,
+    edits: Record<string, ItemEdits>,
     integrationSettings: Record<string, string>,
     syncTargets: string[],
   ) => {
@@ -1227,6 +1386,9 @@ export const ActionItemsPage: React.FC = () => {
         status: "completed",
         ...(itemEdits?.description != null ? { description: itemEdits.description } : {}),
         ...(itemEdits?.assignee != null ? { assignee: itemEdits.assignee } : {}),
+        ...(itemEdits?.assignee_notion_user_id != null
+          ? { assignee_notion_user_id: itemEdits.assignee_notion_user_id }
+          : {}),
         ...(itemEdits?.due_date != null ? { due_date: itemEdits.due_date } : {}),
       };
     }));
