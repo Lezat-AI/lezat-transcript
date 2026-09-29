@@ -75,6 +75,12 @@ const fieldInput =
  *     than the general pick; the user can keep that suggestion or drop it.
  *  3. Warnings and the approve button.
  */
+/** A stored date as the date input's value ("YYYY-MM-DD"); "" when there is none. */
+function toInputDate(value: string | null | undefined): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
+
 export function ApprovalReviewModal({
   items,
   integrations,
@@ -107,7 +113,7 @@ export function ApprovalReviewModal({
         assignee: linked?.name ?? i.assignee ?? "",
         assignee_notion_user_id: linked?.id ?? "",
         assignee_email: linked?.email ?? "",
-        due_date: i.due_date ?? "",
+        due_date: toInputDate(i.due_date),
         task_type:
           i.task_type === TASK_TYPE_PREVIOUS
             ? TASK_TYPE_PREVIOUS
@@ -235,7 +241,7 @@ export function ApprovalReviewModal({
       } else if (edited.assignee !== (original.assignee ?? "")) {
         changed.assignee = edited.assignee;
       }
-      if (edited.due_date !== (original.due_date ?? ""))
+      if (edited.due_date !== toInputDate(original.due_date))
         changed.due_date = edited.due_date;
       // Always sent, so the backend knows whether the card is still to do.
       changed.task_type = edited.task_type;
