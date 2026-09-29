@@ -1405,7 +1405,13 @@ assignee_confidence?: string | null;
 /**
  * Notion board suggested for the task, with the reason.
  */
-notion_database_id?: string | null; notion_database_title?: string | null; notion_database_reason?: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null }
+notion_database_id?: string | null; notion_database_title?: string | null; notion_database_reason?: string | null; 
+/**
+ * Official project/client name (e.g. "PeopleZat"); `None` = no project.
+ * Editable through `update_action_item` edits as `{"project": "..."}`
+ * (`""` clears it).
+ */
+project?: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null }
 export type CloudActionItemsResponse = { items: CloudActionItem[] }
 export type CloudLoginResult = { user_email: string; user_name: string; api_key: string }
 export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state: "success"; meeting_id: number; remote_id: string } | { state: "failed"; meeting_id: number; error: string }
