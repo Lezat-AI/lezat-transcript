@@ -462,6 +462,11 @@ impl MeetingManager {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stats: MeetingStats = Arc::default();
         let mut handles = Vec::new();
+        // One clock for both sources: chunk offsets of mic and system audio
+        // must be comparable, or the dialog view interleaves them wrongly.
+        // System capture opens after the mic loop starts (ScreenCaptureKit
+        // can take a while), so a per-thread clock shifted it earlier.
+        let meeting_start = Instant::now();
 
         // Always spawn the microphone loop (cpal).
         let mic_device = resolve_mic_device(&settings);
@@ -477,6 +482,7 @@ impl MeetingManager {
             mic_capture,
             mic_wav_path,
             stats.clone(),
+            meeting_start,
         )?);
 
         // Optionally spawn the system-audio loop.
@@ -511,6 +517,7 @@ impl MeetingManager {
                                 capture,
                                 sys_wav_path,
                                 stats.clone(),
+                                meeting_start,
                             )?)
                         }
                         Err(e) => {
@@ -733,12 +740,21 @@ fn spawn_recording_loop(
     capture: SourceCapture,
     wav_path: Option<PathBuf>,
     stats: MeetingStats,
+    meeting_start: Instant,
 ) -> Result<JoinHandle<()>> {
     let handle = thread::Builder::new()
         .name(format!("meeting-{meeting_id}-{source}"))
         .spawn(move || {
             if let Err(e) = run_recording_loop(
-                &app, &store, meeting_id, &stop_flag, &source, capture, wav_path, &stats,
+                &app,
+                &store,
+                meeting_id,
+                &stop_flag,
+                &source,
+                capture,
+                wav_path,
+                &stats,
+                meeting_start,
             ) {
                 error!("Meeting {meeting_id} [{source}] recording loop failed: {e}");
                 let _ = (MeetingStateEvent::Error {
@@ -806,6 +822,7 @@ fn run_recording_loop(
     mut recorder: SourceCapture,
     wav_path: Option<PathBuf>,
     stats: &MeetingStats,
+    meeting_start: Instant,
 ) -> Result<()> {
     info!("Meeting {meeting_id} [{source}]: recorder opened, starting capture loop");
 
@@ -852,7 +869,6 @@ fn run_recording_loop(
             })?
     };
 
-    let meeting_start = Instant::now();
     // `Some(offset)` while the recorder is capturing a chunk that began at `offset`.
     let mut chunk_offset_ms: Option<u64> = None;
 

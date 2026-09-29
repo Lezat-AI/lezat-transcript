@@ -1,6 +1,8 @@
 /* eslint-disable i18next/no-literal-string */
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { MeetingChunk } from "@/bindings";
+import { removeMicEcho } from "@/lib/echoFilter";
 
 /// A "turn" in the dialog view: consecutive chunks from the same source
 /// merged into a single bubble. Two consecutive mic chunks 4 seconds apart
@@ -12,8 +14,13 @@ type DialogTurn = {
   text: string;
 };
 
+/// Mic text that only repeats the system audio (speaker echo, see
+/// `removeMicEcho`) is left out, so other people's words aren't shown as
+/// the user's.
 export function buildDialogTurns(chunks: MeetingChunk[]): DialogTurn[] {
-  const sorted = [...chunks].sort((a, b) => a.offset_ms - b.offset_ms);
+  const sorted = [...removeMicEcho(chunks).chunks].sort(
+    (a, b) => a.offset_ms - b.offset_ms,
+  );
   const out: DialogTurn[] = [];
   for (const c of sorted) {
     const src: "mic" | "system" = c.source === "system" ? "system" : "mic";
@@ -63,14 +70,22 @@ export const MeetingTranscriptView: React.FC<MeetingTranscriptViewProps> = ({
   mode,
   onModeChange,
 }) => {
-  const [internalMode, setInternalMode] = useState<"dialog" | "plain">("dialog");
+  const [internalMode, setInternalMode] = useState<"dialog" | "plain">(
+    "dialog",
+  );
   const viewMode = mode ?? internalMode;
   const setMode = (m: "dialog" | "plain") => {
     if (onModeChange) onModeChange(m);
     else setInternalMode(m);
   };
 
+  const { t } = useTranslation();
   const hasChunks = chunks.length > 0;
+  const turns = useMemo(() => buildDialogTurns(chunks), [chunks]);
+  const echoHidden = useMemo(() => {
+    const r = removeMicEcho(chunks);
+    return r.removedChunks + r.trimmedChunks;
+  }, [chunks]);
 
   return (
     <div className="flex flex-col gap-2">
@@ -95,7 +110,12 @@ export const MeetingTranscriptView: React.FC<MeetingTranscriptViewProps> = ({
 
       {hasChunks && viewMode === "dialog" ? (
         <div className="flex flex-col gap-2 max-h-96 overflow-y-auto pr-1">
-          {buildDialogTurns(chunks).map((turn, idx) => {
+          {echoHidden > 0 && (
+            <div className="text-[11px] text-mid-gray italic">
+              {t("meetingTranscript.echoHidden", { count: echoHidden })}
+            </div>
+          )}
+          {turns.map((turn, idx) => {
             const isYou = turn.source === "mic";
             return (
               <div
