@@ -46,6 +46,8 @@ interface ItemEdits {
   assignee_email?: string;
   due_date?: string;
   notion_database_id?: string;
+  /** Notion column picked in the modal; wins over the task type for every task. */
+  notion_status?: string;
 }
 
 const normalizePersonName = (value: string) =>
@@ -743,6 +745,8 @@ function ApprovalReviewModal({
       if (targets.has("notion") && (edited.notion_database_id || notionDbId)) {
         changed.notion_database_id = edited.notion_database_id || notionDbId;
       }
+      // The picked column applies to every task, "Tarea anterior" included.
+      if (targets.has("notion") && notionStatus) changed.notion_status = notionStatus;
       if (Object.keys(changed).length > 0) edits[edited.id] = changed;
     }
     const integrationSettings: Record<string, string> = {};
@@ -934,8 +938,9 @@ function ApprovalReviewModal({
                         </select>
                         {notionStatusOpts.length > 0 && (
                           <select value={notionStatus} onChange={(e) => setNotionStatus(e.target.value)}
+                            title={notionStatus ? undefined : t("actionItems.review.statusAutoHint")}
                             className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[120px]">
-                            <option value="">—</option>
+                            <option value="">{t("actionItems.review.statusAuto")}</option>
                             {notionStatusOpts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                           </select>
                         )}

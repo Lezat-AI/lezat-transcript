@@ -723,6 +723,8 @@
       "notInNotionHint": "Pick the Notion person so the card gets an owner.",
       "board": "Notion board",
       "defaultBoard": "Default ({{name}})",
+      "statusAuto": "Automatic",
+      "statusAutoHint": "Pending tasks go to To Do and «Previous task» ones to Done",
       "dateMissingCalendar": "{{count}} task(s) without a date will go to Notion but not to the calendar."
     },
     "previousTask": "Previous task",

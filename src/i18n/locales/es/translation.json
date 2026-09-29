@@ -723,6 +723,8 @@
       "notInNotionHint": "Elige a la persona de Notion para que quede asignada en la tarjeta.",
       "board": "Tablero de Notion",
       "defaultBoard": "Por defecto ({{name}})",
+      "statusAuto": "Automático",
+      "statusAutoHint": "Las pendientes van a Por hacer y las «Tarea anterior» a Terminado",
       "dateMissingCalendar": "{{count}} tarea(s) sin fecha se enviarán a Notion, pero no al calendario."
     },
     "previousTask": "Tarea anterior",
