@@ -87,9 +87,6 @@ pub struct CloudActionItem {
     /// Title of the meeting the task came from.
     #[serde(default)]
     pub meeting_name: Option<String>,
-    /// Project the task belongs to (e.g. "PeopleZat"), when the backend knows it.
-    #[serde(default)]
-    pub project: Option<String>,
     /// How sure the backend is about the owner: "high" | "medium" | "low".
     #[serde(default)]
     pub assignee_confidence: Option<String>,
