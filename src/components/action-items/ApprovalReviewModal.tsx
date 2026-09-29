@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertCircle,
+  CheckCircle2,
   Check,
   Database,
   Loader2,
@@ -140,13 +141,10 @@ export function ApprovalReviewModal({
     (i) => i.provider === "notion",
   )?.config;
   const [notionDbId, setNotionDbId] = useState(notionConfig?.database_id ?? "");
-  // One Notion status for the whole batch ("" = automatic: pending → to-do column,
-  // previous → Done). Defaults to the saved to-do status, but to automatic when the
-  // batch has previous tasks, so those don't land in the to-do column by accident.
-  const [notionStatus, setNotionStatus] = useState(() =>
-    items.some((i) => i.task_type === TASK_TYPE_PREVIOUS)
-      ? ""
-      : (notionConfig?.todo_status ?? ""),
+  // Notion column for the tasks still to do. Tasks already done (reported in a
+  // daily standup) always go to the board's Done column.
+  const [notionStatus, setNotionStatus] = useState(
+    notionConfig?.todo_status ?? "",
   );
   const [useSuggestedBoards, setUseSuggestedBoards] = useState(true);
 
@@ -211,7 +209,9 @@ export function ApprovalReviewModal({
   // ── Validation ──
   const requiresDate = CALENDAR_TARGETS.some((p) => targets.has(p));
   const itemsMissingDate = requiresDate
-    ? editableItems.filter((i) => !i.due_date).length
+    ? editableItems.filter(
+        (i) => !i.due_date && i.task_type !== TASK_TYPE_PREVIOUS,
+      ).length
     : 0;
   // Only block when the board list is loaded; otherwise the backend default applies.
   const itemsMissingBoard =
@@ -245,7 +245,12 @@ export function ApprovalReviewModal({
         changed.due_date = edited.due_date;
       // Always sent, so the backend knows whether the card is still to do.
       changed.task_type = edited.task_type;
-      if (sendsToNotion && notionStatus) changed.notion_status = notionStatus;
+      if (
+        sendsToNotion &&
+        notionStatus &&
+        edited.task_type !== TASK_TYPE_PREVIOUS
+      )
+        changed.notion_status = notionStatus;
       // Each task goes to its suggested board (if kept) or the general one.
       const board = effectiveBoard(edited);
       if (sendsToNotion && board) changed.notion_database_id = board;
@@ -388,7 +393,7 @@ export function ApprovalReviewModal({
                         className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
                       >
                         <option value="">
-                          {t("actionItems.review.statusAutomatic")}
+                          {t("actionItems.review.statusDefault")}
                         </option>
                         {notionStatusOpts.map((s) => (
                           <option key={s.id} value={s.id}>
@@ -404,17 +409,10 @@ export function ApprovalReviewModal({
                 </p>
                 {previousCount > 0 && (
                   <p className="text-[11px] text-blue-500 flex items-center gap-1.5">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                    {notionStatus
-                      ? t("actionItems.review.previousToStatus", {
-                          count: previousCount,
-                          status:
-                            notionStatusOpts.find((o) => o.id === notionStatus)
-                              ?.name ?? notionStatus,
-                        })
-                      : t("actionItems.review.previousToDone", {
-                          count: previousCount,
-                        })}
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    {t("actionItems.review.doneGoToDone", {
+                      count: previousCount,
+                    })}
                   </p>
                 )}
 
@@ -455,25 +453,53 @@ export function ApprovalReviewModal({
                   </span>
                 </div>
                 <div className="flex flex-col gap-3">
-                  {meetingItems.map((item) => (
-                    <TaskCard
-                      key={item.id}
-                      item={item}
-                      config={config}
-                      showBoard={
-                        sendsToNotion &&
-                        useSuggestedBoards &&
-                        hasOtherSuggestion(item)
-                      }
-                      suggestedBoardName={boardName(
-                        item.suggested_board_id,
-                        item.suggested_board_title,
-                      )}
-                      generalBoardName={generalBoardName}
-                      onChange={updateItem}
-                      onSelectAssignee={selectAssignee}
-                    />
-                  ))}
+                  {[TASK_TYPE_PENDING, TASK_TYPE_PREVIOUS].map((type) => {
+                    const section = meetingItems.filter((i) =>
+                      type === TASK_TYPE_PREVIOUS
+                        ? i.task_type === TASK_TYPE_PREVIOUS
+                        : i.task_type !== TASK_TYPE_PREVIOUS,
+                    );
+                    if (section.length === 0) return null;
+                    const isDone = type === TASK_TYPE_PREVIOUS;
+                    return (
+                      <div key={type} className="flex flex-col gap-3">
+                        {previousCount > 0 && (
+                          <p
+                            className={`text-[10px] font-semibold uppercase tracking-wide ${
+                              isDone ? "text-blue-500" : "text-mid-gray"
+                            }`}
+                          >
+                            {isDone
+                              ? t("actionItems.review.sectionDone", {
+                                  count: section.length,
+                                })
+                              : t("actionItems.review.sectionTodo", {
+                                  count: section.length,
+                                })}
+                          </p>
+                        )}
+                        {section.map((item) => (
+                          <TaskCard
+                            key={item.id}
+                            item={item}
+                            config={config}
+                            showBoard={
+                              sendsToNotion &&
+                              useSuggestedBoards &&
+                              hasOtherSuggestion(item)
+                            }
+                            suggestedBoardName={boardName(
+                              item.suggested_board_id,
+                              item.suggested_board_title,
+                            )}
+                            generalBoardName={generalBoardName}
+                            onChange={updateItem}
+                            onSelectAssignee={selectAssignee}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -631,19 +657,25 @@ function TaskCard({
           )}
         </label>
 
-        {/* Due date (optional) */}
-        <label className="flex-1 min-w-[140px] flex flex-col gap-1">
-          <span className={fieldLabel}>
-            {t("actionItems.review.dueDateOptional")}
-          </span>
-          <input
-            type="date"
-            lang="es"
-            value={item.due_date}
-            onChange={(e) => onChange(item.id, "due_date", e.target.value)}
-            className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
-          />
-        </label>
+        {/* Due date (optional); a task already done has none, it goes to the timesheet */}
+        {item.task_type === TASK_TYPE_PREVIOUS ? (
+          <p className="flex-1 min-w-[140px] self-end pb-1.5 text-[11px] text-blue-500">
+            {t("actionItems.review.doneForTimesheet")}
+          </p>
+        ) : (
+          <label className="flex-1 min-w-[140px] flex flex-col gap-1">
+            <span className={fieldLabel}>
+              {t("actionItems.review.dueDateOptional")}
+            </span>
+            <input
+              type="date"
+              lang="es"
+              value={item.due_date}
+              onChange={(e) => onChange(item.id, "due_date", e.target.value)}
+              className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
+            />
+          </label>
+        )}
       </div>
 
       {/* Own board: only when the suggestion differs from the general board */}

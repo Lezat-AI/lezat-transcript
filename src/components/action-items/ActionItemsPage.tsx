@@ -631,9 +631,10 @@ const ActionItemRow = React.memo(function ActionItemRow({
         <div className="flex items-center gap-2 mt-1 text-[11px] text-mid-gray flex-wrap">
           {item.task_type === TASK_TYPE_PREVIOUS && !hasTimesheetEntry && (
             <span
-              className="px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium"
               title={t("actionItems.previousTaskHint")}
             >
+              <CheckCircle2 className="w-2.5 h-2.5" />
               {t("actionItems.previousTask")}
             </span>
           )}
@@ -746,7 +747,9 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
   // Inside the meeting: one block per project, "no project" last; pending tasks first.
   const projectGroups = useMemo(() => {
     const pendingFirst = [
-      ...group.items.filter((i) => i.status !== "completed"),
+      // To do first, then tasks already done (daily standup), then approved ones.
+      ...group.items.filter((i) => i.status !== "completed" && i.task_type !== TASK_TYPE_PREVIOUS),
+      ...group.items.filter((i) => i.status !== "completed" && i.task_type === TASK_TYPE_PREVIOUS),
       ...group.items.filter((i) => i.status === "completed"),
     ];
     return groupByProject(pendingFirst);
@@ -1028,10 +1031,13 @@ export const ActionItemsPage: React.FC = () => {
     const results = await Promise.allSettled(
       ids.map((id) => {
         const itemEdits = edits[id] ?? {};
-        const dueDate = itemEdits.due_date ?? items.find((i) => i.id === id)?.due_date;
+        const original = items.find((i) => i.id === id);
+        const dueDate = itemEdits.due_date ?? original?.due_date;
+        const alreadyDone = (itemEdits.task_type ?? original?.task_type) === TASK_TYPE_PREVIOUS;
         // Include sync_targets so the backend knows which integrations to push to;
-        // a task without a date can't become a calendar event.
-        const targetsForItem = dueDate ? syncTargets : syncTargets.filter((t) => !CALENDAR_TARGETS.includes(t));
+        // a task without a date, or already done, can't become a calendar event.
+        const targetsForItem =
+          dueDate && !alreadyDone ? syncTargets : syncTargets.filter((t) => !CALENDAR_TARGETS.includes(t));
         const payload = { ...itemEdits, sync_targets: targetsForItem };
         return (commands as any).cloudUpdateActionItem(id, "completed", JSON.stringify(payload));
       }),
