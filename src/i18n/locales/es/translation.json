@@ -778,5 +778,30 @@
       "sessionExpired": "Tu sesión de Registro de Horas ha expirado.",
       "reconnectHint": "Ve a Integraciones e inicia sesión en el Registro de Horas nuevamente."
     }
+  },
+  "transcriptView": {
+    "empty": "(sin transcripción)",
+    "copyTranscript": "Copiar transcripción",
+    "speakers": {
+      "mic": "TÚ",
+      "system": "ELLOS"
+    },
+    "modes": {
+      "dialog": {
+        "label": "Diálogo",
+        "hint": "Conversación por hablante, estilo chat",
+        "copy": "Copiar diálogo"
+      },
+      "timeline": {
+        "label": "Cronología",
+        "hint": "Cada fragmento con su marca de tiempo y hablante",
+        "copy": "Copiar cronología"
+      },
+      "plain": {
+        "label": "Texto",
+        "hint": "Solo el texto, sin hablantes ni tiempos",
+        "copy": "Copiar texto"
+      }
+    }
   }
 }
