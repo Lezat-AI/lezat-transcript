@@ -134,8 +134,14 @@ export function ApprovalReviewModal({
   const connected = integrations.filter(
     (i) => i.connected && !NON_TARGET_PROVIDERS.includes(i.provider),
   );
+  // Calendars start unchecked: events are only created when the user asks for them.
   const [targets, setTargets] = useState<Set<string>>(
-    () => new Set(connected.map((i) => i.provider)),
+    () =>
+      new Set(
+        connected
+          .map((i) => i.provider)
+          .filter((p) => !CALENDAR_TARGETS.includes(p)),
+      ),
   );
   const notionConfig = integrations.find(
     (i) => i.provider === "notion",
