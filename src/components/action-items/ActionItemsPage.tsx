@@ -2,82 +2,21 @@ import React, { useCallback, useEffect, useMemo, useState, useTransition } from 
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
-
-interface CloudActionItem {
-  id: string;
-  meeting_id: string | null;
-  meeting_title: string | null;
-  description: string | null;
-  assignee: string | null;
-  assignee_notion_user_id?: string | null;
-  // Newer backends send the task title and meeting name separately (older ones
-  // put the task title in meeting_title).
-  title?: string | null;
-  meeting_name?: string | null;
-  notion_database_id?: string | null;
-  notion_database_title?: string | null;
-  notion_database_reason?: string | null;
-  due_date: string | null;
-  task_type: string;
-  status: string;
-  synced_to: string[];
-  created_at: string | null;
-}
-
-interface IntegrationInfo {
-  provider: string;
-  connected: boolean;
-  config: {
-    database_id: string | null;
-    board_id: string | null;
-    todo_status: string | null;
-  } | null;
-}
-
-interface SelectOption { id: string; name: string }
-
-interface NotionPersonOption { id: string; name: string; email?: string | null }
-
-/** Edits sent when approving; owner fields travel together when picked from Notion. */
-interface ItemEdits {
-  description?: string;
-  assignee?: string;
-  assignee_notion_user_id?: string;
-  assignee_email?: string;
-  due_date?: string;
-  notion_database_id?: string;
-}
-
-const normalizePersonName = (value: string) =>
-  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
-
-/** "2026-10-01" (or an ISO datetime) → "01/10/2026". Other values pass through. */
-function formatDate(value: string | null | undefined): string {
-  if (!value) return "";
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
-}
-
-/** Calendars need a date: tasks without one go to the other targets only. */
-const CALENDAR_TARGETS = ["google-calendar", "outlook-calendar"];
-
-/** The Notion person a free-text owner refers to: exact name, else a unique partial match. */
-function findNotionPerson(name: string, people: NotionPersonOption[]): NotionPersonOption | undefined {
-  const wanted = normalizePersonName(name);
-  if (!wanted) return undefined;
-  const exact = people.filter((p) => normalizePersonName(p.name) === wanted);
-  if (exact.length > 0) return exact.length === 1 ? exact[0] : undefined;
-  const tokens = wanted.split(" ");
-  const partial = people.filter((p) => {
-    const personTokens = normalizePersonName(p.name).split(" ");
-    return tokens.every((t) => personTokens.includes(t));
-  });
-  return partial.length === 1 ? partial[0] : undefined;
-}
+import { ApprovalReviewModal } from "./ApprovalReviewModal";
+import { groupByProject } from "./projects";
+import {
+  CALENDAR_TARGETS,
+  type CloudActionItem,
+  formatDate,
+  type IntegrationInfo,
+  type ItemEdits,
+  type PreloadedConfig,
+  type SelectOption,
+  TASK_TYPE_PREVIOUS,
+} from "./shared";
 
 import {
   CheckCircle2,
-  Circle,
   RefreshCw,
   Loader2,
   AlertCircle,
@@ -96,6 +35,9 @@ import {
   Check,
   Pencil,
   Trash2,
+  User,
+  CalendarDays,
+  Folder,
 } from "lucide-react";
 
 interface MeetingGroup {
@@ -104,16 +46,6 @@ interface MeetingGroup {
   items: CloudActionItem[];
   completed: number;
   total: number;
-}
-
-// ─── Pre-loaded config cache ─────────────────────────────────────
-
-interface PreloadedConfig {
-  notionDbs: SelectOption[];
-  mondayBoards: SelectOption[];
-  notionStatuses: Record<string, SelectOption[]>; // keyed by database_id
-  mondayStatuses: Record<string, SelectOption[]>; // keyed by board_id
-  notionPeople: NotionPersonOption[];
 }
 
 // ─── Timesheet Dialog ───────────────────────────────────────────
@@ -627,361 +559,15 @@ function BulkApprovalBar({
   );
 }
 
-// ─── Approval Review Modal ────────────────────────────────────────
-
-interface EditableItem {
-  id: string;
-  title: string;
-  description: string;
-  notion_database_id: string;
-  notion_database_reason: string;
-  assignee: string;
-  assignee_notion_user_id: string;
-  assignee_email: string;
-  due_date: string;
-  meeting_title: string;
-}
-
-// Select values that aren't Notion user ids.
-const NO_ASSIGNEE = "";
-const UNLINKED_ASSIGNEE = "__unlinked__";
-
-function ApprovalReviewModal({
-  items,
-  integrations,
-  config,
-  onConfirm,
-  onClose,
-}: {
-  items: CloudActionItem[];
-  integrations: IntegrationInfo[];
-  config: PreloadedConfig;
-  onConfirm: (edits: Record<string, ItemEdits>, integrationSettings: Record<string, string>, syncTargets: string[]) => void;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const [editableItems, setEditableItems] = useState<EditableItem[]>(() =>
-    items.map((i) => {
-      const linked =
-        config.notionPeople.find((p) => p.id === i.assignee_notion_user_id) ??
-        (i.assignee ? findNotionPerson(i.assignee, config.notionPeople) : undefined);
-      return {
-        id: i.id,
-        title: i.title ?? "",
-        description: i.description ?? "",
-        notion_database_id: i.notion_database_id ?? "",
-        notion_database_reason: i.notion_database_reason ?? "",
-        assignee: linked?.name ?? i.assignee ?? "",
-        assignee_notion_user_id: linked?.id ?? "",
-        assignee_email: linked?.email ?? "",
-        due_date: i.due_date ?? "",
-        meeting_title: i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
-      };
-    }),
-  );
-  const [submitting, setSubmitting] = useState(false);
-
-  // Integration targets (same as BulkApprovalBar)
-  const connected = integrations.filter((i) => i.connected && !["read-ai", "monday", "fireflies"].includes(i.provider));
-  const [targets, setTargets] = useState<Set<string>>(() => new Set(connected.map((i) => i.provider)));
-  const [notionDbId, setNotionDbId] = useState(
-    integrations.find((i) => i.provider === "notion")?.config?.database_id ?? "",
-  );
-  const [notionStatus, setNotionStatus] = useState(
-    integrations.find((i) => i.provider === "notion")?.config?.todo_status ?? "",
-  );
-
-  const notionStatusOpts = config.notionStatuses[notionDbId] ?? [];
-
-  const toggleTarget = (p: string) => setTargets((prev) => {
-    const n = new Set(prev);
-    if (n.has(p)) n.delete(p); else n.add(p);
-    return n;
-  });
-
-  const updateItem = (id: string, field: keyof Omit<EditableItem, "id" | "meeting_title">, value: string) => {
-    setEditableItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
-    );
-  };
-
-  const selectAssignee = (id: string, value: string) => {
-    if (value === UNLINKED_ASSIGNEE) return;
-    const person = config.notionPeople.find((p) => p.id === value);
-    setEditableItems((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              assignee: person?.name ?? "",
-              assignee_notion_user_id: person?.id ?? "",
-              assignee_email: person?.email ?? "",
-            }
-          : item,
-      ),
-    );
-  };
-
-  const handleConfirm = () => {
-    setSubmitting(true);
-    const edits: Record<string, ItemEdits> = {};
-    for (const edited of editableItems) {
-      const original = items.find((i) => i.id === edited.id);
-      if (!original) continue;
-      const changed: ItemEdits = {};
-      if (edited.description !== (original.description ?? "")) changed.description = edited.description;
-      if (edited.assignee_notion_user_id !== (original.assignee_notion_user_id ?? "")) {
-        // Send the Notion user itself, not just its name, so the card gets the owner.
-        changed.assignee = edited.assignee;
-        changed.assignee_notion_user_id = edited.assignee_notion_user_id;
-        changed.assignee_email = edited.assignee_email;
-      } else if (edited.assignee !== (original.assignee ?? "")) {
-        changed.assignee = edited.assignee;
-      }
-      if (edited.due_date !== (original.due_date ?? "")) changed.due_date = edited.due_date;
-      // Each task goes to its own board: the suggested/picked one, else the default below.
-      if (targets.has("notion") && (edited.notion_database_id || notionDbId)) {
-        changed.notion_database_id = edited.notion_database_id || notionDbId;
-      }
-      if (Object.keys(changed).length > 0) edits[edited.id] = changed;
-    }
-    const integrationSettings: Record<string, string> = {};
-    if (targets.has("notion")) {
-      if (notionDbId) integrationSettings["NOTION_TASKS_DATABASE_ID"] = notionDbId;
-      if (notionStatus) integrationSettings["NOTION_KANBAN_TODO_STATUS"] = notionStatus;
-    }
-    onConfirm(edits, integrationSettings, Array.from(targets));
-  };
-
-  const LABELS: Record<string, string> = {
-    notion: "Notion",
-    "google-calendar": "Google Calendar",
-    "outlook-calendar": "Outlook",
-  };
-
-  const requiresDate = CALENDAR_TARGETS.some((p) => targets.has(p));
-  const itemsMissingDate = requiresDate
-    ? editableItems.filter((i) => !i.due_date).map((i) => i.id)
-    : [];
-
-  // Group editable items by meeting
-  const groupedByMeeting = useMemo(() => {
-    const map = new Map<string, EditableItem[]>();
-    for (const item of editableItems) {
-      const key = item.meeting_title;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(item);
-    }
-    return Array.from(map.entries());
-  }, [editableItems]);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="bg-background rounded-xl shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[85vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="px-6 pt-5 pb-3 border-b border-mid-gray/20">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold">{t("actionItems.review.title")}</h3>
-            <button onClick={onClose} className="p-1 rounded hover:bg-mid-gray/10">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <p className="text-xs text-mid-gray mt-1">
-            {t("actionItems.review.subtitle", { count: items.length })}
-          </p>
-        </div>
-
-        {/* Scrollable items list */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4">
-          {groupedByMeeting.map(([meetingTitle, meetingItems]) => (
-            <div key={meetingTitle}>
-              <div className="flex items-center gap-2 mb-2">
-                <Video className="w-3.5 h-3.5 text-mid-gray" />
-                <span className="text-xs font-medium text-mid-gray">{meetingTitle}</span>
-              </div>
-              <div className="flex flex-col gap-3">
-                {meetingItems.map((item) => (
-                  <div key={item.id} className="rounded-lg border border-mid-gray/15 p-3 flex flex-col gap-2">
-                    {item.title && <p className="text-sm font-medium">{item.title}</p>}
-                    {/* Description */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
-                        {t("actionItems.review.description")}
-                      </label>
-                      <textarea
-                        value={item.description}
-                        onChange={(e) => updateItem(item.id, "description", e.target.value)}
-                        rows={2}
-                        className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-transparent resize-none focus:outline-none focus:border-lezat-sage/50"
-                        placeholder={t("actionItems.review.noDescription")}
-                      />
-                    </div>
-                    {/* Assignee + Due Date in a row */}
-                    <div className="flex gap-3">
-                      <div className="flex-1 flex flex-col gap-1">
-                        <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
-                          {t("actionItems.review.assignee")}
-                        </label>
-                        {config.notionPeople.length > 0 ? (
-                          <>
-                            <select
-                              value={
-                                item.assignee_notion_user_id ||
-                                (item.assignee ? UNLINKED_ASSIGNEE : NO_ASSIGNEE)
-                              }
-                              onChange={(e) => selectAssignee(item.id, e.target.value)}
-                              className={`w-full px-2.5 py-1.5 text-sm rounded-md border bg-background focus:outline-none ${
-                                item.assignee && !item.assignee_notion_user_id
-                                  ? "border-amber-500/50 focus:border-amber-500"
-                                  : "border-mid-gray/15 focus:border-lezat-sage/50"
-                              }`}
-                            >
-                              <option value={NO_ASSIGNEE}>{t("actionItems.review.noAssignee")}</option>
-                              {item.assignee && !item.assignee_notion_user_id && (
-                                <option value={UNLINKED_ASSIGNEE}>
-                                  {t("actionItems.review.notInNotion", { name: item.assignee })}
-                                </option>
-                              )}
-                              {config.notionPeople.map((person) => (
-                                <option key={person.id} value={person.id}>{person.name}</option>
-                              ))}
-                            </select>
-                            {item.assignee && !item.assignee_notion_user_id && (
-                              <span className="text-[10px] text-amber-500">
-                                {t("actionItems.review.notInNotionHint")}
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <input
-                            type="text"
-                            value={item.assignee}
-                            onChange={(e) => updateItem(item.id, "assignee", e.target.value)}
-                            className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-transparent focus:outline-none focus:border-lezat-sage/50"
-                          />
-                        )}
-                      </div>
-                      {targets.has("notion") && config.notionDbs.length > 0 && (
-                        <div className="flex-1 flex flex-col gap-1">
-                          <label className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
-                            {t("actionItems.review.board")}
-                          </label>
-                          <select
-                            value={item.notion_database_id}
-                            onChange={(e) => {
-                              updateItem(item.id, "notion_database_id", e.target.value);
-                              updateItem(item.id, "notion_database_reason", "");
-                            }}
-                            className="w-full px-2.5 py-1.5 text-sm rounded-md border border-mid-gray/15 bg-background focus:outline-none focus:border-lezat-sage/50"
-                          >
-                            <option value="">
-                              {t("actionItems.review.defaultBoard", {
-                                name: config.notionDbs.find((db) => db.id === notionDbId)?.name ?? "—",
-                              })}
-                            </option>
-                            {config.notionDbs.map((db) => (
-                              <option key={db.id} value={db.id}>{db.name}</option>
-                            ))}
-                          </select>
-                          {item.notion_database_reason && (
-                            <span className="text-[10px] text-mid-gray">{item.notion_database_reason}</span>
-                          )}
-                        </div>
-                      )}
-                      <div className="flex-1 flex flex-col gap-1">
-                        <label className="text-[10px] font-medium uppercase tracking-wide text-mid-gray">
-                          {t("actionItems.review.dueDate")}
-                        </label>
-                        <input
-                          type="date"
-                          lang="es"
-                          value={item.due_date}
-                          onChange={(e) => updateItem(item.id, "due_date", e.target.value)}
-                          className="w-full px-2.5 py-1.5 text-sm rounded-md border bg-transparent focus:outline-none border-mid-gray/15 focus:border-lezat-sage/50"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Footer with integration targets + confirm */}
-        <div className="px-6 py-4 border-t border-mid-gray/20 flex flex-col gap-3">
-          {/* Integration checkboxes */}
-          {connected.length > 0 && (
-            <div className="flex flex-wrap items-start gap-4">
-              {connected.map((integration) => {
-                const checked = targets.has(integration.provider);
-                const isNotion = integration.provider === "notion" && checked;
-                return (
-                  <div key={integration.provider} className="flex flex-col gap-1">
-                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                      <input type="checkbox" checked={checked} onChange={() => toggleTarget(integration.provider)} className="accent-lezat-sage" />
-                      <span className="text-[11px] font-medium">{LABELS[integration.provider] ?? integration.provider}</span>
-                    </label>
-                    {isNotion && (
-                      <div className="flex items-center gap-1.5 ml-5">
-                        <select value={notionDbId} onChange={(e) => setNotionDbId(e.target.value)}
-                          className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[140px]">
-                          <option value="">—</option>
-                          {config.notionDbs.map((db) => <option key={db.id} value={db.id}>{db.name}</option>)}
-                        </select>
-                        {notionStatusOpts.length > 0 && (
-                          <select value={notionStatus} onChange={(e) => setNotionStatus(e.target.value)}
-                            className="text-[10px] px-1.5 py-0.5 rounded border border-mid-gray/20 bg-transparent cursor-pointer max-w-[120px]">
-                            <option value="">—</option>
-                            {notionStatusOpts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                          </select>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Tasks without a date skip the calendar (the date is optional) */}
-          {itemsMissingDate.length > 0 && (
-            <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-              {t("actionItems.review.dateMissingCalendar", { count: itemsMissingDate.length })}
-            </p>
-          )}
-
-          {/* Action buttons */}
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-1.5 text-xs font-medium rounded-lg border border-mid-gray/20 hover:bg-mid-gray/10 transition-colors"
-            >
-              {t("actionItems.review.cancel")}
-            </button>
-            <button
-              onClick={handleConfirm}
-              disabled={submitting || targets.size === 0}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-lezat-sage text-[#0d0d1a] hover:bg-lezat-sage/80 disabled:opacity-50 transition-colors"
-            >
-              {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-              {submitting
-                ? t("actionItems.review.confirming")
-                : t("actionItems.review.confirm")
-              }
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Memoised Action Item Row ────────────────────────────────────
+
+/** How each sync target is shown on an approved task. */
+const SYNCED_LABELS: Record<string, string> = {
+  notion: "Notion",
+  monday: "Monday",
+  google_calendar: "Google Calendar",
+  outlook_calendar: "Outlook",
+};
 
 const ActionItemRow = React.memo(function ActionItemRow({
   item,
@@ -1011,14 +597,22 @@ const ActionItemRow = React.memo(function ActionItemRow({
       }`}
     >
       {isPending ? (
-        <button onClick={() => onToggleSelect(item.id)} className="mt-0.5 shrink-0">
+        <button
+          onClick={() => onToggleSelect(item.id)}
+          className="mt-0.5 shrink-0"
+          title={t("actionItems.selectTask")}
+        >
           {isSelected
             ? <CheckSquare className="w-[16px] h-[16px] text-lezat-sage" />
             : <Square className="w-[16px] h-[16px] opacity-20 hover:opacity-50 transition-opacity" />
           }
         </button>
       ) : (
-        <button onClick={() => onUnapprove(item)} className="mt-0.5 shrink-0">
+        <button
+          onClick={() => onUnapprove(item)}
+          className="mt-0.5 shrink-0"
+          title={t("actionItems.unapprove")}
+        >
           <CheckCircle2 className="w-[16px] h-[16px] text-green-500" />
         </button>
       )}
@@ -1030,11 +624,16 @@ const ActionItemRow = React.memo(function ActionItemRow({
           {item.title || item.description || "—"}
         </p>
         {item.title && item.description && (
-          <p className="text-xs text-mid-gray leading-relaxed line-clamp-2">{item.description}</p>
+          <p className={`text-xs text-mid-gray leading-relaxed line-clamp-2 ${isPending ? "" : "opacity-60"}`}>
+            {item.description}
+          </p>
         )}
         <div className="flex items-center gap-2 mt-1 text-[11px] text-mid-gray flex-wrap">
-          {item.task_type === "completed_previous" && !hasTimesheetEntry && (
-            <span className="px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium">
+          {item.task_type === TASK_TYPE_PREVIOUS && !hasTimesheetEntry && (
+            <span
+              className="px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium"
+              title={t("actionItems.previousTaskHint")}
+            >
               {t("actionItems.previousTask")}
             </span>
           )}
@@ -1058,15 +657,36 @@ const ActionItemRow = React.memo(function ActionItemRow({
               </button>
             </span>
           )}
-          {item.assignee && <span className="px-1.5 py-0.5 rounded bg-mid-gray/8">{item.assignee}</span>}
-          {item.due_date && <span>{formatDate(item.due_date)}</span>}
+          {item.assignee && (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-mid-gray/8">
+              <User className="w-2.5 h-2.5" />
+              {item.assignee}
+            </span>
+          )}
+          {item.due_date && (
+            <span className="flex items-center gap-1">
+              <CalendarDays className="w-2.5 h-2.5" />
+              {formatDate(item.due_date)}
+            </span>
+          )}
           {isPending && item.notion_database_title && (
-            <span className="px-1.5 py-0.5 rounded bg-mid-gray/8" title={item.notion_database_reason ?? undefined}>
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-mid-gray/8"
+              title={item.notion_database_reason ?? undefined}
+            >
+              <Database className="w-2.5 h-2.5" />
               {item.notion_database_title}
             </span>
           )}
           {item.synced_to.map((s: string) => (
-            <span key={s} className="px-1.5 py-0.5 rounded-full bg-lezat-sage/15 text-lezat-sage text-[10px] font-medium">{s}</span>
+            <span
+              key={s}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-lezat-sage/15 text-lezat-sage text-[10px] font-medium"
+              title={t("actionItems.syncedTo", { name: SYNCED_LABELS[s] ?? s })}
+            >
+              <Check className="w-2.5 h-2.5" />
+              {SYNCED_LABELS[s] ?? s}
+            </span>
           ))}
         </div>
       </div>
@@ -1074,16 +694,34 @@ const ActionItemRow = React.memo(function ActionItemRow({
   );
 });
 
+// ─── Selection checkbox for a set of tasks ──────────────────────
+
+type SelectionState = "none" | "some" | "all";
+
+/** Selection of the not-yet-approved tasks in `items`. */
+function selectionOf(items: CloudActionItem[], selected: Set<string>): SelectionState {
+  const pending = items.filter((i) => i.status !== "completed");
+  if (pending.length === 0) return "none";
+  const count = pending.filter((i) => selected.has(i.id)).length;
+  if (count === 0) return "none";
+  return count === pending.length ? "all" : "some";
+}
+
+function SelectAllBox({ state, className }: { state: SelectionState; className: string }) {
+  if (state === "all") return <CheckSquare className={`${className} text-lezat-sage`} />;
+  if (state === "some") return <MinusSquare className={`${className} text-lezat-sage`} />;
+  return <Square className={className} />;
+}
+
 // ─── Memoised Meeting Group ─────────────────────────────────────
 
 const MeetingGroupCard = React.memo(function MeetingGroupCard({
   group,
   isCollapsed,
-  selectionState,
   selected,
   taskEntryMap,
   onToggleCollapse,
-  onToggleSelectGroup,
+  onToggleSelectAll,
   onToggleSelect,
   onUnapprove,
   onTimesheetEdit,
@@ -1092,11 +730,11 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
 }: {
   group: MeetingGroup;
   isCollapsed: boolean;
-  selectionState: "none" | "some" | "all";
   selected: Set<string>;
   taskEntryMap: Record<string, number>;
   onToggleCollapse: (meetingId: string) => void;
-  onToggleSelectGroup: (group: MeetingGroup) => void;
+  /** Select (or clear, if all are selected) the pending tasks among `items`. */
+  onToggleSelectAll: (items: CloudActionItem[]) => void;
   onToggleSelect: (id: string) => void;
   onUnapprove: (item: CloudActionItem) => void;
   onTimesheetEdit: (item: CloudActionItem, entryId: number) => void;
@@ -1105,22 +743,40 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
 }) {
   const progress = group.total > 0 ? Math.round((group.completed / group.total) * 100) : 0;
 
+  // Inside the meeting: one block per project, "no project" last; pending tasks first.
+  const projectGroups = useMemo(() => {
+    const pendingFirst = [
+      ...group.items.filter((i) => i.status !== "completed"),
+      ...group.items.filter((i) => i.status === "completed"),
+    ];
+    return groupByProject(pendingFirst);
+  }, [group.items]);
+  // A lone "no project" block needs no heading.
+  const showProjectHeaders = !(projectGroups.length === 1 && projectGroups[0].project === null);
+
+  const renderRow = (item: CloudActionItem) => (
+    <ActionItemRow
+      key={item.id}
+      item={item}
+      isSelected={selected.has(item.id)}
+      timesheetEntryId={taskEntryMap[item.id]}
+      onToggleSelect={onToggleSelect}
+      onUnapprove={onUnapprove}
+      onTimesheetEdit={onTimesheetEdit}
+      onTimesheetDelete={onTimesheetDelete}
+    />
+  );
+
   return (
     <div className="border-b border-mid-gray/10">
       {/* Meeting header */}
       <div className="flex items-center gap-1 px-4 py-3 hover:bg-mid-gray/[0.03] transition-colors">
         <button
-          onClick={() => onToggleSelectGroup(group)}
+          onClick={() => onToggleSelectAll(group.items)}
           className="p-1 shrink-0 opacity-40 hover:opacity-100 transition-opacity"
           title={t("actionItems.bulk.selectGroup")}
         >
-          {selectionState === "all" ? (
-            <CheckSquare className="w-3.5 h-3.5 text-lezat-sage" />
-          ) : selectionState === "some" ? (
-            <MinusSquare className="w-3.5 h-3.5 text-lezat-sage" />
-          ) : (
-            <Square className="w-3.5 h-3.5" />
-          )}
+          <SelectAllBox state={selectionOf(group.items, selected)} className="w-3.5 h-3.5" />
         </button>
 
         <button
@@ -1135,7 +791,10 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
           <p className="flex-1 min-w-0 text-sm font-medium truncate">{group.meeting_title}</p>
         </button>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div
+          className="flex items-center gap-2 shrink-0"
+          title={t("actionItems.approvedCount", { done: group.completed, total: group.total })}
+        >
           <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
             progress === 100 ? "bg-green-500/15 text-green-600" : "bg-mid-gray/10 text-mid-gray"
           }`}>
@@ -1150,21 +809,38 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
         </div>
       </div>
 
-      {/* Items */}
+      {/* Items, grouped by project */}
       {!isCollapsed && (
-        <div className="pb-2">
-          {group.items.map((item) => (
-            <ActionItemRow
-              key={item.id}
-              item={item}
-              isSelected={selected.has(item.id)}
-              timesheetEntryId={taskEntryMap[item.id]}
-              onToggleSelect={onToggleSelect}
-              onUnapprove={onUnapprove}
-              onTimesheetEdit={onTimesheetEdit}
-              onTimesheetDelete={onTimesheetDelete}
-            />
-          ))}
+        <div className="pb-2 flex flex-col gap-1">
+          {projectGroups.map((pg) => {
+            if (!showProjectHeaders) return pg.items.map(renderRow);
+            const state = selectionOf(pg.items, selected);
+            const hasPending = pg.items.some((i) => i.status !== "completed");
+            return (
+              <div key={pg.project ?? "__none__"}>
+                <div className="flex items-center gap-1.5 pl-[38px] pr-4 pt-2 pb-1">
+                  {hasPending ? (
+                    <button
+                      onClick={() => onToggleSelectAll(pg.items)}
+                      className="p-0.5 shrink-0 opacity-40 hover:opacity-100 transition-opacity"
+                      title={t("actionItems.projects.selectAll")}
+                    >
+                      <SelectAllBox state={state} className="w-3 h-3" />
+                    </button>
+                  ) : (
+                    <Folder className="w-3 h-3 m-0.5 text-mid-gray shrink-0" />
+                  )}
+                  <span className={`text-xs font-semibold ${
+                    pg.project ? "text-text/80" : "text-mid-gray"
+                  }`}>
+                    {pg.project ?? t("actionItems.projects.none")}
+                  </span>
+                  <span className="text-[10px] text-mid-gray">{pg.items.length}</span>
+                </div>
+                {pg.items.map(renderRow)}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1318,26 +994,17 @@ export const ActionItemsPage: React.FC = () => {
     });
   };
 
-  const toggleSelectGroup = (group: MeetingGroup) => {
-    const pending = group.items.filter((i) => i.status !== "completed");
-    const allSelected = pending.every((i) => selected.has(i.id));
+  const toggleSelectAll = useCallback((groupItems: CloudActionItem[]) => {
+    const pending = groupItems.filter((i) => i.status !== "completed");
     setSelected((prev) => {
+      const allSelected = pending.every((i) => prev.has(i.id));
       const n = new Set(prev);
       for (const i of pending) {
         if (allSelected) n.delete(i.id); else n.add(i.id);
       }
       return n;
     });
-  };
-
-  const groupSelectionState = (group: MeetingGroup): "none" | "some" | "all" => {
-    const pending = group.items.filter((i) => i.status !== "completed");
-    if (pending.length === 0) return "none";
-    const count = pending.filter((i) => selected.has(i.id)).length;
-    if (count === 0) return "none";
-    if (count === pending.length) return "all";
-    return "some";
-  };
+  }, []);
 
   // ── Approve helpers ──
 
@@ -1396,6 +1063,7 @@ export const ActionItemsPage: React.FC = () => {
           ? { assignee_notion_user_id: itemEdits.assignee_notion_user_id }
           : {}),
         ...(itemEdits?.due_date != null ? { due_date: itemEdits.due_date } : {}),
+        ...(itemEdits?.task_type != null ? { task_type: itemEdits.task_type } : {}),
       };
     }));
     setSelected(new Set());
@@ -1525,11 +1193,10 @@ export const ActionItemsPage: React.FC = () => {
               key={group.meeting_id}
               group={group}
               isCollapsed={collapsed?.has(group.meeting_id) ?? false}
-              selectionState={groupSelectionState(group)}
               selected={selected}
               taskEntryMap={taskEntryMap}
               onToggleCollapse={toggleCollapse}
-              onToggleSelectGroup={toggleSelectGroup}
+              onToggleSelectAll={toggleSelectAll}
               onToggleSelect={toggleSelect}
               onUnapprove={handleUnapprove}
               onTimesheetEdit={openTimesheetEdit}

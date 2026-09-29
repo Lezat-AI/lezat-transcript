@@ -1399,6 +1399,10 @@ title?: string | null;
  */
 meeting_name?: string | null; 
 /**
+ * Project the task belongs to (e.g. "PeopleZat"), when the backend knows it.
+ */
+project?: string | null; 
+/**
  * How sure the backend is about the owner: "high" | "medium" | "low".
  */
 assignee_confidence?: string | null; 
