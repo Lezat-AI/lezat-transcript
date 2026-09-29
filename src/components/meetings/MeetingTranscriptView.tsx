@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { MeetingChunk } from "@/bindings";
+import { removeMicEcho } from "@/lib/echoFilter";
 
 export type Speaker = "mic" | "system";
 
@@ -14,9 +15,38 @@ export type TranscriptSegment = {
   text: string;
 };
 
-/// Single entry point from raw chunks to normalized segments: sorted by
-/// time, empty chunks dropped. Speaker attribution lives here.
+/// Older transcriptions sometimes stored Gemini's raw answer,
+/// `{"text": "...", "language_detected": "es"}`, as the chunk text. Show only
+/// the text.
+export function cleanChunkText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") || !trimmed.includes('"text"')) return text;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && "text" in parsed) {
+      return String((parsed as { text: unknown }).text ?? "");
+    }
+  } catch {
+    // Malformed or cut short: keep what follows "text": up to the next field.
+  }
+  const match = trimmed.match(/"text"\s*:\s*"([\s\S]*?)"?\s*(?:,\s*"language_detected"[\s\S]*)?\}?\s*$/);
+  return match ? match[1].replace(/\\"/g, '"').replace(/\\n/g, " ") : text;
+}
+
+/// Raw chunks with raw-JSON text cleaned and the mic's speaker echo removed
+/// (see `removeMicEcho`), so other people's words aren't shown as the user's.
+export function filterChunks(chunks: MeetingChunk[]) {
+  return removeMicEcho(chunks.map((c) => ({ ...c, text: cleanChunkText(c.text) })));
+}
+
+/// Single entry point from raw chunks to normalized segments: JSON cleaned,
+/// echo removed, sorted by time, empty chunks dropped. Speaker attribution
+/// lives here.
 export function buildSegments(chunks: MeetingChunk[]): TranscriptSegment[] {
+  return toSegments(filterChunks(chunks).chunks);
+}
+
+function toSegments(chunks: MeetingChunk[]): TranscriptSegment[] {
   return [...chunks]
     .sort((a, b) => a.offset_ms - b.offset_ms)
     .map((c) => ({
@@ -164,7 +194,9 @@ export const MeetingTranscriptView: React.FC<MeetingTranscriptViewProps> = ({
     }
   };
 
-  const segments = buildSegments(chunks);
+  const filtered = useMemo(() => filterChunks(chunks), [chunks]);
+  const segments = useMemo(() => toSegments(filtered.chunks), [filtered]);
+  const echoHidden = filtered.removedChunks + filtered.trimmedChunks;
   const hasSegments = segments.length > 0;
   const speaker = (s: Speaker) =>
     s === "mic"
@@ -271,6 +303,11 @@ export const MeetingTranscriptView: React.FC<MeetingTranscriptViewProps> = ({
               {t(`transcriptView.modes.${m}.label`)}
             </button>
           ))}
+        </div>
+      )}
+      {hasSegments && echoHidden > 0 && (
+        <div className="text-[11px] text-mid-gray italic">
+          {t("meetingTranscript.echoHidden", { count: echoHidden })}
         </div>
       )}
       {body}
