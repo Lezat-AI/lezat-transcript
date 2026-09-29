@@ -722,7 +722,8 @@
       "notInNotion": "{{name}} (not in Notion)",
       "notInNotionHint": "Pick the Notion person so the card gets an owner.",
       "board": "Notion board",
-      "defaultBoard": "Default ({{name}})"
+      "defaultBoard": "Default ({{name}})",
+      "dateMissingCalendar": "{{count}} task(s) without a date will go to Notion but not to the calendar."
     },
     "previousTask": "Previous task",
     "loadMore": "Show more meetings ({{remaining}} remaining)"

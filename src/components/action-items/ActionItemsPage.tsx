@@ -51,6 +51,16 @@ interface ItemEdits {
 const normalizePersonName = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 
+/** "2026-10-01" (or an ISO datetime) → "01/10/2026". Other values pass through. */
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+}
+
+/** Calendars need a date: tasks without one go to the other targets only. */
+const CALENDAR_TARGETS = ["google-calendar", "outlook-calendar"];
+
 /** The Notion person a free-text owner refers to: exact name, else a unique partial match. */
 function findNotionPerson(name: string, people: NotionPersonOption[]): NotionPersonOption | undefined {
   const wanted = normalizePersonName(name);
@@ -749,8 +759,7 @@ function ApprovalReviewModal({
     "outlook-calendar": "Outlook",
   };
 
-  const CALENDAR_PROVIDERS = ["google-calendar", "outlook-calendar"];
-  const requiresDate = CALENDAR_PROVIDERS.some((p) => targets.has(p));
+  const requiresDate = CALENDAR_TARGETS.some((p) => targets.has(p));
   const itemsMissingDate = requiresDate
     ? editableItems.filter((i) => !i.due_date).map((i) => i.id)
     : [];
@@ -883,21 +892,15 @@ function ApprovalReviewModal({
                         </div>
                       )}
                       <div className="flex-1 flex flex-col gap-1">
-                        <label className={`text-[10px] font-medium uppercase tracking-wide ${
-                          itemsMissingDate.includes(item.id) ? "text-red-500" : "text-mid-gray"
-                        }`}>
+                        <label className="text-[10px] font-medium uppercase tracking-wide text-mid-gray">
                           {t("actionItems.review.dueDate")}
-                          {itemsMissingDate.includes(item.id) && " *"}
                         </label>
                         <input
                           type="date"
+                          lang="es"
                           value={item.due_date}
                           onChange={(e) => updateItem(item.id, "due_date", e.target.value)}
-                          className={`w-full px-2.5 py-1.5 text-sm rounded-md border bg-transparent focus:outline-none ${
-                            itemsMissingDate.includes(item.id)
-                              ? "border-red-500/50 focus:border-red-500"
-                              : "border-mid-gray/15 focus:border-lezat-sage/50"
-                          }`}
+                          className="w-full px-2.5 py-1.5 text-sm rounded-md border bg-transparent focus:outline-none border-mid-gray/15 focus:border-lezat-sage/50"
                         />
                       </div>
                     </div>
@@ -944,11 +947,11 @@ function ApprovalReviewModal({
             </div>
           )}
 
-          {/* Date required warning */}
+          {/* Tasks without a date skip the calendar (the date is optional) */}
           {itemsMissingDate.length > 0 && (
-            <p className="text-[11px] text-red-500 flex items-center gap-1.5">
+            <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-              {t("actionItems.review.dateRequired", { count: itemsMissingDate.length })}
+              {t("actionItems.review.dateMissingCalendar", { count: itemsMissingDate.length })}
             </p>
           )}
 
@@ -962,7 +965,7 @@ function ApprovalReviewModal({
             </button>
             <button
               onClick={handleConfirm}
-              disabled={submitting || targets.size === 0 || itemsMissingDate.length > 0}
+              disabled={submitting || targets.size === 0}
               className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-lezat-sage text-[#0d0d1a] hover:bg-lezat-sage/80 disabled:opacity-50 transition-colors"
             >
               {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
@@ -1056,7 +1059,7 @@ const ActionItemRow = React.memo(function ActionItemRow({
             </span>
           )}
           {item.assignee && <span className="px-1.5 py-0.5 rounded bg-mid-gray/8">{item.assignee}</span>}
-          {item.due_date && <span>{item.due_date}</span>}
+          {item.due_date && <span>{formatDate(item.due_date)}</span>}
           {isPending && item.notion_database_title && (
             <span className="px-1.5 py-0.5 rounded bg-mid-gray/8" title={item.notion_database_reason ?? undefined}>
               {item.notion_database_title}
@@ -1358,8 +1361,11 @@ export const ActionItemsPage: React.FC = () => {
     const results = await Promise.allSettled(
       ids.map((id) => {
         const itemEdits = edits[id] ?? {};
-        // Include sync_targets so the backend knows which integrations to push to
-        const payload = { ...itemEdits, sync_targets: syncTargets };
+        const dueDate = itemEdits.due_date ?? items.find((i) => i.id === id)?.due_date;
+        // Include sync_targets so the backend knows which integrations to push to;
+        // a task without a date can't become a calendar event.
+        const targetsForItem = dueDate ? syncTargets : syncTargets.filter((t) => !CALENDAR_TARGETS.includes(t));
+        const payload = { ...itemEdits, sync_targets: targetsForItem };
         return (commands as any).cloudUpdateActionItem(id, "completed", JSON.stringify(payload));
       }),
     );
