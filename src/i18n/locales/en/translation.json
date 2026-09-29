@@ -809,5 +809,30 @@
       "sessionExpired": "Your Timesheet session has expired.",
       "reconnectHint": "Go to Integrations and sign in to Timesheet again."
     }
+  },
+  "transcriptView": {
+    "empty": "(no transcript)",
+    "copyTranscript": "Copy transcript",
+    "speakers": {
+      "mic": "YOU",
+      "system": "THEM"
+    },
+    "modes": {
+      "dialog": {
+        "label": "Dialogue",
+        "hint": "Conversation by speaker, chat style",
+        "copy": "Copy dialogue"
+      },
+      "timeline": {
+        "label": "Timeline",
+        "hint": "Every segment with its timestamp and speaker",
+        "copy": "Copy timeline"
+      },
+      "plain": {
+        "label": "Text",
+        "hint": "Just the text, no speakers or timestamps",
+        "copy": "Copy text"
+      }
+    }
   }
 }

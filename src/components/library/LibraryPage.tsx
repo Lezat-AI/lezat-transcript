@@ -25,12 +25,16 @@ import {
   type MeetingChunk,
   type MeetingRecord,
 } from "@/bindings";
+import { useTranslation } from "react-i18next";
 import { useOsType } from "@/hooks/useOsType";
 import { AudioPlayer } from "../ui/AudioPlayer";
 import { Button } from "../ui/Button";
 import {
   MeetingTranscriptView,
-  formatDialogAsText,
+  formatTranscriptForCopy,
+  loadTranscriptViewMode,
+  saveTranscriptViewMode,
+  type TranscriptViewMode,
 } from "../meetings/MeetingTranscriptView";
 
 /// Unified "Library" view — the single canonical browser for everything the
@@ -123,13 +127,17 @@ async function downloadMeetingAudio(
 
 export function LibraryPage() {
   const osType = useOsType();
+  const { t } = useTranslation();
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<LibraryItem | null>(null);
-  const [meetingViewMode, setMeetingViewMode] = useState<"dialog" | "plain">(
-    "dialog",
-  );
+  const [meetingViewMode, setMeetingViewModeState] =
+    useState<TranscriptViewMode>(loadTranscriptViewMode);
+  const setMeetingViewMode = (m: TranscriptViewMode) => {
+    setMeetingViewModeState(m);
+    saveTranscriptViewMode(m);
+  };
   const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [syncingIds, setSyncingIds] = useState<Set<number>>(new Set());
@@ -225,14 +233,18 @@ export function LibraryPage() {
   };
 
   const handleCopy = (item: LibraryItem) => {
-    let text = item.transcript;
-    if (
-      item.kind === "meeting" &&
-      meetingViewMode === "dialog" &&
-      (item.chunks?.length ?? 0) > 0
-    ) {
-      text = formatDialogAsText(item.chunks!);
-    }
+    const text =
+      item.kind === "meeting"
+        ? formatTranscriptForCopy(
+            item.chunks ?? [],
+            meetingViewMode,
+            {
+              mic: t("transcriptView.speakers.mic"),
+              system: t("transcriptView.speakers.system"),
+            },
+            item.transcript,
+          )
+        : item.transcript;
     navigator.clipboard?.writeText(text).catch(() => undefined);
     setCopiedId(item.id);
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
@@ -534,10 +546,9 @@ export function LibraryPage() {
                           <Copy className="w-3 h-3" />
                         )}
                         {item.kind === "meeting" &&
-                        meetingViewMode === "dialog" &&
                         (item.chunks?.length ?? 0) > 0
-                          ? "Copiar diálogo"
-                          : "Copiar transcripción"}
+                          ? t(`transcriptView.modes.${meetingViewMode}.copy`)
+                          : t("transcriptView.copyTranscript")}
                       </button>
 
                       {item.kind === "meeting" && (
