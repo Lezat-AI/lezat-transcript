@@ -58,6 +58,12 @@ function formatDate(value: string | null | undefined): string {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
 }
 
+/** A stored date as the date input's value ("YYYY-MM-DD"); "" when there is none. */
+function toInputDate(value: string | null | undefined): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
+
 /** Calendars need a date: tasks without one go to the other targets only. */
 const CALENDAR_TARGETS = ["google-calendar", "outlook-calendar"];
 
@@ -674,7 +680,7 @@ function ApprovalReviewModal({
         assignee: linked?.name ?? i.assignee ?? "",
         assignee_notion_user_id: linked?.id ?? "",
         assignee_email: linked?.email ?? "",
-        due_date: i.due_date ?? "",
+        due_date: toInputDate(i.due_date),
         meeting_title: i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
       };
     }),
@@ -738,7 +744,7 @@ function ApprovalReviewModal({
       } else if (edited.assignee !== (original.assignee ?? "")) {
         changed.assignee = edited.assignee;
       }
-      if (edited.due_date !== (original.due_date ?? "")) changed.due_date = edited.due_date;
+      if (edited.due_date !== toInputDate(original.due_date)) changed.due_date = edited.due_date;
       // Each task goes to its own board: the suggested/picked one, else the default below.
       if (targets.has("notion") && (edited.notion_database_id || notionDbId)) {
         changed.notion_database_id = edited.notion_database_id || notionDbId;
