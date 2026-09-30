@@ -29,14 +29,24 @@ export function cleanChunkText(text: string): string {
   } catch {
     // Malformed or cut short: keep what follows "text": up to the next field.
   }
-  const match = trimmed.match(/"text"\s*:\s*"([\s\S]*?)"?\s*(?:,\s*"language_detected"[\s\S]*)?\}?\s*$/);
-  return match ? match[1].replace(/\\"/g, '"').replace(/\\n/g, " ") : text;
+  const match = trimmed.match(
+    /"text"\s*:\s*"([\s\S]*?)"?\s*(?:,\s*"language_detected"[\s\S]*)?\}?\s*$/,
+  );
+  if (!match) return text;
+  return match[1]
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+      String.fromCharCode(parseInt(hex, 16)),
+    )
+    .replace(/\\"/g, '"')
+    .replace(/\\n/g, " ");
 }
 
 /// Raw chunks with raw-JSON text cleaned and the mic's speaker echo removed
 /// (see `removeMicEcho`), so other people's words aren't shown as the user's.
 export function filterChunks(chunks: MeetingChunk[]) {
-  return removeMicEcho(chunks.map((c) => ({ ...c, text: cleanChunkText(c.text) })));
+  return removeMicEcho(
+    chunks.map((c) => ({ ...c, text: cleanChunkText(c.text) })),
+  );
 }
 
 /// Single entry point from raw chunks to normalized segments: JSON cleaned,

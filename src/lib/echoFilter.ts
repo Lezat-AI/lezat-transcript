@@ -8,7 +8,7 @@
 /// Conservative by design, so the user's own speech survives when both talk:
 /// - only mic text is ever removed, and only where it repeats a run of at
 ///   least `MIN_ECHO_RUN` words of a system chunk captured around the same
-///   time (the chunk before, at, or after);
+///   time (the chunk before, at, or after), at about the same moment;
 /// - words the system audio never said stay, e.g. the user answering while
 ///   the other person speaks;
 /// - a whole mic chunk is dropped only when nothing but echo is left.
@@ -27,6 +27,12 @@ const CHUNK_MS = 12_000;
 /// and next chunk. Echo arrives within milliseconds, but the two sources
 /// roll their chunks independently, so a phrase can straddle a boundary.
 const WINDOW_MS = CHUNK_MS + 3_000;
+/// Echo arrives within milliseconds, so a repeated phrase only counts when it
+/// sits at about the same moment in both sources. A word's moment is
+/// estimated from its position in its chunk; this much slack covers uneven
+/// speech rate. Without it, the user repeating the other person a few
+/// seconds later ("sí, yo te mando la propuesta el viernes") was deleted.
+const ALIGN_MS = 6_000;
 /// Words in a row that must match to count as echo (shingle size).
 const SHINGLE = 3;
 /// Shortest run of matched words removed. Shorter repeats ("sí, claro") are
@@ -40,8 +46,37 @@ const MAX_GAP = 2;
 
 type Token = { norm: string; start: number; end: number };
 
+/// Spelled-out numbers compare equal to digits ("cinco" = "5"), as ASR
+/// writes them either way.
+const NUMBER_WORDS: Record<string, string> = {
+  cero: "0",
+  uno: "1",
+  una: "1",
+  un: "1",
+  dos: "2",
+  tres: "3",
+  cuatro: "4",
+  cinco: "5",
+  seis: "6",
+  siete: "7",
+  ocho: "8",
+  nueve: "9",
+  diez: "10",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+  ten: "10",
+};
+
 function normalize(word: string): string {
-  return word.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const plain = word.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
+  return NUMBER_WORDS[plain] ?? plain;
 }
 
 function tokenize(text: string): Token[] {
@@ -53,10 +88,18 @@ function tokenize(text: string): Token[] {
   return out;
 }
 
-function shingles(words: string[]): Set<string> {
-  const out = new Set<string>();
+/// Each shingle with its estimated moment (words spread over the chunk).
+function timedShingles(
+  offsetMs: number,
+  words: string[],
+): Array<[string, number]> {
+  const count = Math.max(words.length, 1);
+  const out: Array<[string, number]> = [];
   for (let i = 0; i + SHINGLE <= words.length; i++) {
-    out.add(words.slice(i, i + SHINGLE).join(" "));
+    out.push([
+      words.slice(i, i + SHINGLE).join(" "),
+      offsetMs + (CHUNK_MS * (i + SHINGLE / 2)) / count,
+    ]);
   }
   return out;
 }
@@ -159,10 +202,22 @@ export function removeMicEcho<T extends SourcedChunk>(
       out.push(c);
       continue;
     }
-    const reference = new Set<string>();
+    // Mic shingles a nearby system chunk said at about the same moment.
+    const heard = new Map<string, number[]>();
     for (const s of system) {
       if (Math.abs(s.at - c.offset_ms) > WINDOW_MS) continue;
-      for (const sh of shingles(s.words)) reference.add(sh);
+      for (const [sh, at] of timedShingles(s.at, s.words)) {
+        const times = heard.get(sh);
+        if (times) times.push(at);
+        else heard.set(sh, [at]);
+      }
+    }
+    const reference = new Set<string>();
+    const micWords = tokenize(c.text).map((t) => t.norm);
+    for (const [sh, at] of timedShingles(c.offset_ms, micWords)) {
+      if (heard.get(sh)?.some((t) => Math.abs(t - at) <= ALIGN_MS)) {
+        reference.add(sh);
+      }
     }
     const text = stripEcho(c.text, reference);
     if (text === null) {
