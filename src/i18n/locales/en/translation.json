@@ -766,6 +766,14 @@
     "projects": {
       "none": "No project",
       "selectAll": "Select pending tasks in this project"
+    },
+    "project": {
+      "none": "No project",
+      "change": "Change this task's project",
+      "moveTo": "Move to project…",
+      "moveHint": "Move the selected tasks to a project",
+      "saveFailed_one": "Couldn't save the project of 1 task. Try again.",
+      "saveFailed_other": "Couldn't save the project of {{count}} tasks. Try again."
     }
   },
   "integrations": {

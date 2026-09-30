@@ -19,6 +19,11 @@ export const KNOWN_PROJECTS = [
   "Lezat",
 ] as const;
 
+/** Projects offered when moving a task, alphabetically ("Kaza Living", "Lezat"…). */
+export const PROJECT_OPTIONS: readonly string[] = [...KNOWN_PROJECTS].sort(
+  (a, b) => a.localeCompare(b, "es"),
+);
+
 /** Lowercase, no accents, letters and digits only: "Teucalí " → "teucali". */
 function compact(value: string): string {
   return value
@@ -50,9 +55,12 @@ export function resolveProject(item: {
   notion_database_title?: string | null;
   notion_database_confidence?: string | null;
 }): string | null {
-  if (item.project) {
-    const fromBackend = canonicalProject(item.project);
-    if (fromBackend) return fromBackend;
+  // The backend always sends `project` (null = no project, possibly the user's
+  // choice): respect it. Only records from older backends lack the field.
+  if (item.project !== undefined) {
+    const value = item.project?.trim();
+    if (!value) return null;
+    return canonicalProject(value) ?? value;
   }
   // Like the backend: only a confidently suggested board says which project it is.
   const confident =

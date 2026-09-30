@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
 import { ApprovalReviewModal } from "./ApprovalReviewModal";
-import { groupByProject } from "./projects";
+import { groupByProject, PROJECT_OPTIONS, resolveProject } from "./projects";
 import {
   CALENDAR_TARGETS,
   type CloudActionItem,
@@ -515,12 +515,14 @@ function BulkApprovalBar({
   selectedCount,
   hasPreviousTasks,
   onApprove,
+  onMoveToProject,
   onAddToTimesheet,
   onClear,
 }: {
   selectedCount: number;
   hasPreviousTasks: boolean;
   onApprove: () => void;
+  onMoveToProject: (project: string | null) => void;
   onAddToTimesheet: () => void;
   onClear: () => void;
 }) {
@@ -537,7 +539,27 @@ function BulkApprovalBar({
         </button>
       </div>
 
-      <div className="flex items-center gap-2 justify-end">
+      <div className="flex items-center gap-2 justify-end flex-wrap">
+        <label className="flex items-center gap-1.5 text-xs text-mid-gray">
+          <Folder className="w-3 h-3" />
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value === "") return;
+              onMoveToProject(e.target.value === NO_PROJECT ? null : e.target.value);
+            }}
+            title={t("actionItems.project.moveHint")}
+            className="px-2 py-1.5 rounded-lg border border-mid-gray/20 bg-background text-xs text-text focus:outline-none focus:border-lezat-sage/50"
+          >
+            <option value="">{t("actionItems.project.moveTo")}</option>
+            {PROJECT_OPTIONS.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+            <option value={NO_PROJECT}>{t("actionItems.project.none")}</option>
+          </select>
+        </label>
         {hasPreviousTasks && (
           <button
             onClick={onAddToTimesheet}
@@ -559,6 +581,48 @@ function BulkApprovalBar({
   );
 }
 
+// ─── Project picker ──────────────────────────────────────────────
+
+/** Value of the "no project" option in project selects. */
+const NO_PROJECT = "__none__";
+
+/** Chip that shows a task's project and moves it to another one. */
+function ProjectPicker({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (project: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const options = value && !PROJECT_OPTIONS.includes(value) ? [...PROJECT_OPTIONS, value] : PROJECT_OPTIONS;
+  return (
+    <label
+      className={`relative flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+        value ? "bg-mid-gray/8 hover:bg-mid-gray/15" : "border border-dashed border-mid-gray/40 hover:border-lezat-sage/60 hover:text-text"
+      }`}
+      title={t("actionItems.project.change")}
+    >
+      <Folder className="w-2.5 h-2.5" />
+      <span>{value ?? t("actionItems.project.none")}</span>
+      <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+      <select
+        value={value ?? NO_PROJECT}
+        onChange={(e) => onChange(e.target.value === NO_PROJECT ? null : e.target.value)}
+        aria-label={t("actionItems.project.change")}
+        className="absolute inset-0 opacity-0 cursor-pointer"
+      >
+        {options.map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+        <option value={NO_PROJECT}>{t("actionItems.project.none")}</option>
+      </select>
+    </label>
+  );
+}
+
 // ─── Memoised Action Item Row ────────────────────────────────────
 
 /** How each sync target is shown on an approved task. */
@@ -575,6 +639,7 @@ const ActionItemRow = React.memo(function ActionItemRow({
   timesheetEntryId,
   onToggleSelect,
   onUnapprove,
+  onChangeProject,
   onTimesheetEdit,
   onTimesheetDelete,
 }: {
@@ -583,6 +648,7 @@ const ActionItemRow = React.memo(function ActionItemRow({
   timesheetEntryId?: number;
   onToggleSelect: (id: string) => void;
   onUnapprove: (item: CloudActionItem) => void;
+  onChangeProject: (ids: string[], project: string | null) => void;
   onTimesheetEdit: (item: CloudActionItem, entryId: number) => void;
   onTimesheetDelete: (item: CloudActionItem, entryId: number) => void;
 }) {
@@ -629,6 +695,12 @@ const ActionItemRow = React.memo(function ActionItemRow({
           </p>
         )}
         <div className="flex items-center gap-2 mt-1 text-[11px] text-mid-gray flex-wrap">
+          {isPending && (
+            <ProjectPicker
+              value={resolveProject(item)}
+              onChange={(project) => onChangeProject([item.id], project)}
+            />
+          )}
           {item.task_type === TASK_TYPE_PREVIOUS && !hasTimesheetEntry && (
             <span
               className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-500 text-[10px] font-medium"
@@ -725,6 +797,7 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
   onToggleSelectAll,
   onToggleSelect,
   onUnapprove,
+  onChangeProject,
   onTimesheetEdit,
   onTimesheetDelete,
   t,
@@ -738,6 +811,7 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
   onToggleSelectAll: (items: CloudActionItem[]) => void;
   onToggleSelect: (id: string) => void;
   onUnapprove: (item: CloudActionItem) => void;
+  onChangeProject: (ids: string[], project: string | null) => void;
   onTimesheetEdit: (item: CloudActionItem, entryId: number) => void;
   onTimesheetDelete: (item: CloudActionItem, entryId: number) => void;
   t: (key: string, opts?: Record<string, unknown>) => string;
@@ -765,6 +839,7 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
       timesheetEntryId={taskEntryMap[item.id]}
       onToggleSelect={onToggleSelect}
       onUnapprove={onUnapprove}
+      onChangeProject={onChangeProject}
       onTimesheetEdit={onTimesheetEdit}
       onTimesheetDelete={onTimesheetDelete}
     />
@@ -874,6 +949,7 @@ export const ActionItemsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   // Approval failures: shown as a banner so the list (and the selection) stays usable.
   const [approveError, setApproveError] = useState<{ failed: number; detail: string } | null>(null);
+  const [projectError, setProjectError] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string> | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationInfo[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -1095,6 +1171,31 @@ export const ActionItemsPage: React.FC = () => {
     setReviewModalOpen(false);
   };
 
+  // Move tasks to a project (or to "no project"). Shown at once; saved in the
+  // backend, and undone if saving fails.
+  const handleChangeProject = useCallback(
+    async (ids: string[], project: string | null) => {
+      const targets = items.filter((i) => ids.includes(i.id) && i.status !== "completed");
+      if (targets.length === 0) return;
+      const before = new Map(targets.map((i) => [i.id, i.project ?? null]));
+      setItems((prev) => prev.map((i) => (before.has(i.id) ? { ...i, project } : i)));
+      const results = await Promise.allSettled(
+        targets.map((i) =>
+          (commands as any).cloudUpdateActionItem(i.id, i.status, JSON.stringify({ project: project ?? "" })),
+        ),
+      );
+      const failed = targets.filter(
+        (_, idx) => results[idx].status !== "fulfilled" || (results[idx] as PromiseFulfilledResult<any>).value?.status !== "ok",
+      );
+      if (failed.length > 0) {
+        const failedIds = new Set(failed.map((i) => i.id));
+        setItems((prev) => prev.map((i) => (failedIds.has(i.id) ? { ...i, project: before.get(i.id) ?? null } : i)));
+        setProjectError(failed.length);
+      }
+    },
+    [items],
+  );
+
   const handleUnapprove = async (item: CloudActionItem) => {
     try {
       const r = await (commands as any).cloudUpdateActionItem(item.id, "pending");
@@ -1228,6 +1329,16 @@ export const ActionItemsPage: React.FC = () => {
         </div>
       )}
 
+      {projectError && (
+        <div className="mx-6 mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <p className="flex-1">{t("actionItems.project.saveFailed", { count: projectError })}</p>
+          <button onClick={() => setProjectError(null)} className="p-0.5 rounded hover:bg-amber-500/20">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
       {groups.length === 0 ? (
         <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center px-8">
           <Video className="w-10 h-10 opacity-20" />
@@ -1246,6 +1357,7 @@ export const ActionItemsPage: React.FC = () => {
               onToggleSelectAll={toggleSelectAll}
               onToggleSelect={toggleSelect}
               onUnapprove={handleUnapprove}
+              onChangeProject={handleChangeProject}
               onTimesheetEdit={openTimesheetEdit}
               onTimesheetDelete={handleInlineTimesheetDelete}
               t={t}
@@ -1270,6 +1382,7 @@ export const ActionItemsPage: React.FC = () => {
           selectedCount={selected.size}
           hasPreviousTasks={items.some((i) => selected.has(i.id) && i.task_type === "completed_previous")}
           onApprove={handleOpenReviewModal}
+          onMoveToProject={(project) => handleChangeProject(Array.from(selected), project)}
           onAddToTimesheet={openTimesheetCreate}
           onClear={() => setSelected(new Set())}
         />

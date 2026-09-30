@@ -766,6 +766,14 @@
     "projects": {
       "none": "Sin proyecto",
       "selectAll": "Seleccionar las pendientes de este proyecto"
+    },
+    "project": {
+      "none": "Sin proyecto",
+      "change": "Cambiar el proyecto de esta tarea",
+      "moveTo": "Mover a proyecto…",
+      "moveHint": "Mueve las tareas seleccionadas a un proyecto",
+      "saveFailed_one": "No se pudo guardar el proyecto de 1 tarea. Inténtalo de nuevo.",
+      "saveFailed_other": "No se pudo guardar el proyecto de {{count}} tareas. Inténtalo de nuevo."
     }
   },
   "integrations": {
