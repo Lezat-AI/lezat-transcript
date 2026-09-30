@@ -94,4 +94,31 @@ describe("removeMicEcho", () => {
     const chunks = [mic(0, "hola a todos"), mic(12_000, "seguimos")];
     expect(removeMicEcho(chunks).chunks).toBe(chunks);
   });
+  test("the user repeating the other person later is not echo", () => {
+    const chunks = [
+      sys(
+        36000,
+        "Perfecto Angel. Entonces tú me mandas la propuesta comercial de PeopleZat el viernes, ¿listo?",
+      ),
+      mic(
+        48000,
+        "Sí, yo te mando la propuesta comercial de PeopleZat el viernes sin falta.",
+      ),
+    ];
+    expect(removeMicEcho(chunks).chunks).toEqual(chunks);
+  });
+
+  test("numbers as digits or words match", () => {
+    const r = removeMicEcho([
+      sys(
+        0,
+        "un microcrédito de tres, cuatro, 5 millones que se gastó en 5 minutos",
+      ),
+      mic(
+        0,
+        "un microcrédito de tres, cuatro, cinco millones que se gastó en cinco minutos",
+      ),
+    ]);
+    expect(r.removedChunks).toBe(1);
+  });
 });
