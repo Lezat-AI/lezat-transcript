@@ -860,6 +860,8 @@ export const ActionItemsPage: React.FC = () => {
   const [items, setItems] = useState<CloudActionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Approval failures: shown as a banner so the list (and the selection) stays usable.
+  const [approveError, setApproveError] = useState<{ failed: number; detail: string } | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string> | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationInfo[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -1054,8 +1056,11 @@ export const ActionItemsPage: React.FC = () => {
     });
     if (errors.length > 0) {
       console.warn("Some action items failed to approve:", errors);
-      setError(errors[0]);
     }
+    const failedCount = ids.length - succeeded.size;
+    setApproveError(
+      failedCount > 0 ? { failed: failedCount, detail: errors[0] ?? "" } : null,
+    );
     // Update local items with edits + status change
     setItems((prev) => prev.map((i) => {
       if (!succeeded.has(i.id)) return i;
@@ -1072,7 +1077,8 @@ export const ActionItemsPage: React.FC = () => {
         ...(itemEdits?.task_type != null ? { task_type: itemEdits.task_type } : {}),
       };
     }));
-    setSelected(new Set());
+    // Tasks that failed stay selected so the user can retry them.
+    setSelected(new Set(ids.filter((id) => !succeeded.has(id))));
     setReviewModalOpen(false);
   };
 
@@ -1186,6 +1192,28 @@ export const ActionItemsPage: React.FC = () => {
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
+
+      {approveError && (
+        <div className="mx-6 mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">
+              {t("actionItems.approval.failed", { count: approveError.failed })}
+            </p>
+            {approveError.detail && (
+              <p className="opacity-80 break-words line-clamp-2">{approveError.detail}</p>
+            )}
+          </div>
+          <button
+            onClick={() => setApproveError(null)}
+            className="p-0.5 rounded hover:bg-red-500/20"
+            title={t("actionItems.approval.dismissError")}
+            aria-label={t("actionItems.approval.dismissError")}
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {groups.length === 0 ? (
         <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center px-8">

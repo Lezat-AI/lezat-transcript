@@ -697,12 +697,17 @@
       "noIntegrations": "No integrations connected. Go to Integrations to set up.",
       "kanban": "Database",
       "board": "Board",
-      "status": "Status"
+      "status": "Status",
+      "failed_one": "1 task couldn't be approved. It is still selected so you can try again.",
+      "failed_other": "{{count}} tasks couldn't be approved. They are still selected so you can try again.",
+      "dismissError": "Dismiss"
     },
     "bulk": {
-      "selected": "{{count}} tasks selected",
+      "selected_one": "1 task selected",
+      "selected_other": "{{count}} tasks selected",
       "clear": "Clear selection",
-      "approve": "Approve {{count}} tasks",
+      "approve_one": "Approve 1 task",
+      "approve_other": "Approve {{count}} tasks",
       "addToTimesheet": "Add to timesheet",
       "selectGroup": "Select all pending in this meeting"
     },
@@ -718,7 +723,8 @@
       "noAssignee": "No owner",
       "notInNotion": "{{name}} (not in Notion)",
       "notInNotionHint": "Pick the Notion person so the card gets an owner.",
-      "dateMissingCalendar": "{{count}} task(s) without a date will go to Notion but not to the calendar.",
+      "dateMissingCalendar_one": "1 task without a date will go to Notion but not to the calendar.",
+      "dateMissingCalendar_other": "{{count}} tasks without a date will go to Notion but not to the calendar.",
       "title_one": "Approve {{count}} task",
       "title_other": "Approve {{count}} tasks",
       "destination": "Where should they go?",

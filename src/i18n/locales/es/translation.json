@@ -697,12 +697,17 @@
       "noIntegrations": "No hay integraciones conectadas. Ve a Integraciones para configurarlas.",
       "kanban": "Base de datos",
       "board": "Tablero",
-      "status": "Estado"
+      "status": "Estado",
+      "failed_one": "No se pudo aprobar 1 tarea. Sigue seleccionada para que la vuelvas a intentar.",
+      "failed_other": "No se pudieron aprobar {{count}} tareas. Siguen seleccionadas para que las vuelvas a intentar.",
+      "dismissError": "Cerrar"
     },
     "bulk": {
-      "selected": "{{count}} tareas seleccionadas",
+      "selected_one": "1 tarea seleccionada",
+      "selected_other": "{{count}} tareas seleccionadas",
       "clear": "Limpiar selección",
-      "approve": "Aprobar {{count}} tareas",
+      "approve_one": "Aprobar 1 tarea",
+      "approve_other": "Aprobar {{count}} tareas",
       "addToTimesheet": "Agregar al registro de horas",
       "selectGroup": "Seleccionar todas las pendientes de esta reunión"
     },
@@ -718,7 +723,8 @@
       "noAssignee": "Sin responsable",
       "notInNotion": "{{name}} (no está en Notion)",
       "notInNotionHint": "Elige a la persona de Notion para que quede asignada en la tarjeta.",
-      "dateMissingCalendar": "{{count}} tarea(s) sin fecha se enviarán a Notion, pero no al calendario.",
+      "dateMissingCalendar_one": "1 tarea sin fecha se enviará a Notion, pero no al calendario.",
+      "dateMissingCalendar_other": "{{count}} tareas sin fecha se enviarán a Notion, pero no al calendario.",
       "title_one": "Aprobar {{count}} tarea",
       "title_other": "Aprobar {{count}} tareas",
       "destination": "¿A dónde se envían?",
