@@ -48,12 +48,17 @@ function canonicalProject(value: string): string | null {
 export function resolveProject(item: {
   project?: string | null;
   notion_database_title?: string | null;
+  notion_database_confidence?: string | null;
 }): string | null {
   if (item.project) {
     const fromBackend = canonicalProject(item.project);
     if (fromBackend) return fromBackend;
   }
-  return detectProject(item.notion_database_title);
+  // Like the backend: only a confidently suggested board says which project it is.
+  const confident =
+    item.notion_database_confidence === "high" ||
+    item.notion_database_confidence === "medium";
+  return confident ? detectProject(item.notion_database_title) : null;
 }
 
 export interface ProjectGroup<T> {

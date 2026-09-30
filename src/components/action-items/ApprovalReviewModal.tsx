@@ -32,6 +32,8 @@ interface EditableItem {
   due_date: string;
   task_type: string;
   meeting_title: string;
+  /** Groups tasks by meeting: two meetings can share a title ("Daily"). */
+  meeting_key: string;
   /** Board the backend suggested for this task ("" = none). */
   suggested_board_id: string;
   suggested_board_title: string;
@@ -121,6 +123,7 @@ export function ApprovalReviewModal({
             : TASK_TYPE_PENDING,
         meeting_title:
           i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
+        meeting_key: i.meeting_id ?? i.meeting_name ?? i.meeting_title ?? "",
         suggested_board_id: i.notion_database_id ?? "",
         suggested_board_title: i.notion_database_title ?? "",
         suggested_board_reason: i.notion_database_reason ?? "",
@@ -275,9 +278,9 @@ export function ApprovalReviewModal({
   const groupedByMeeting = useMemo(() => {
     const map = new Map<string, EditableItem[]>();
     for (const item of editableItems) {
-      const list = map.get(item.meeting_title);
+      const list = map.get(item.meeting_key);
       if (list) list.push(item);
-      else map.set(item.meeting_title, [item]);
+      else map.set(item.meeting_key, [item]);
     }
     return Array.from(map.entries());
   }, [editableItems]);
@@ -436,11 +439,13 @@ export function ApprovalReviewModal({
                           count: suggestedCount,
                         })}
                       </span>
-                      <span className="text-[10px] text-mid-gray">
-                        {t("actionItems.review.useSuggestedHint", {
-                          name: generalBoardName,
-                        })}
-                      </span>
+                      {notionDbId && (
+                        <span className="text-[10px] text-mid-gray">
+                          {t("actionItems.review.useSuggestedHint", {
+                            name: generalBoardName,
+                          })}
+                        </span>
+                      )}
                     </span>
                   </label>
                 )}
@@ -450,12 +455,12 @@ export function ApprovalReviewModal({
 
           {/* 2. Tasks */}
           <div className="px-6 py-4 flex flex-col gap-4">
-            {groupedByMeeting.map(([meetingTitle, meetingItems]) => (
-              <div key={meetingTitle}>
+            {groupedByMeeting.map(([meetingKey, meetingItems]) => (
+              <div key={meetingKey}>
                 <div className="flex items-center gap-2 mb-2">
                   <Video className="w-3.5 h-3.5 text-mid-gray" />
                   <span className="text-xs font-medium text-mid-gray">
-                    {meetingTitle}
+                    {meetingItems[0].meeting_title}
                   </span>
                 </div>
                 <div className="flex flex-col gap-3">

@@ -854,6 +854,18 @@ const PAGE_SIZE = 4;
 
 // ─── Main Page ───────────────────────────────────────────────────
 
+/** Items approved or synced from the web count as approved here, so they can't be
+ *  approved (and sent to Notion) a second time; rejected ones are not shown. */
+function normalizeStatuses(items: CloudActionItem[]): CloudActionItem[] {
+  return items
+    .filter((i) => i.status !== "rejected")
+    .map((i) =>
+      i.status === "approved" || i.status === "synced"
+        ? { ...i, status: "completed" }
+        : i,
+    );
+}
+
 export const ActionItemsPage: React.FC = () => {
   const { t } = useTranslation();
   const { settings } = useSettings();
@@ -893,7 +905,7 @@ export const ActionItemsPage: React.FC = () => {
         (commands as any).cloudGetActionItems(),
         (commands as any).cloudGetIntegrationsStatus(),
       ]);
-      if (itemsRes.status === "ok") setItems(itemsRes.data.items);
+      if (itemsRes.status === "ok") setItems(normalizeStatuses(itemsRes.data.items));
       else setError(itemsRes.error);
       if (intRes.status === "ok") setIntegrations(intRes.data.integrations);
     } catch (e) { setError(String(e)); }
@@ -1068,6 +1080,7 @@ export const ActionItemsPage: React.FC = () => {
       return {
         ...i,
         status: "completed",
+        synced_to: Array.from(new Set([...(i.synced_to ?? []), ...syncTargets.filter((t) => t === "notion")])),
         ...(itemEdits?.description != null ? { description: itemEdits.description } : {}),
         ...(itemEdits?.assignee != null ? { assignee: itemEdits.assignee } : {}),
         ...(itemEdits?.assignee_notion_user_id != null

@@ -845,7 +845,7 @@
     }
   },
   "meetingTranscript": {
-    "echoHidden_one": "1 microphone fragment that repeated the call audio (speaker echo) is hidden. Use headphones to avoid it.",
-    "echoHidden_other": "{{count}} microphone fragments that repeated the call audio (speaker echo) are hidden. Use headphones to avoid it."
+    "echoHidden_one": "1 mic fragment that repeated the call audio (speaker echo) was hidden or shortened. Use headphones to avoid it.",
+    "echoHidden_other": "{{count}} mic fragments that repeated the call audio (speaker echo) were hidden or shortened. Use headphones to avoid it."
   }
 }

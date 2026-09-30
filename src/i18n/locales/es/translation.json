@@ -845,7 +845,7 @@
     }
   },
   "meetingTranscript": {
-    "echoHidden_one": "Se ocultó 1 fragmento del micrófono que repetía el audio de la llamada (eco de los parlantes). Usa audífonos para evitarlo.",
-    "echoHidden_other": "Se ocultaron {{count}} fragmentos del micrófono que repetían el audio de la llamada (eco de los parlantes). Usa audífonos para evitarlo."
+    "echoHidden_one": "Se ocultó o acortó 1 fragmento del micrófono que repetía el audio de la llamada (eco de los parlantes). Usa audífonos para evitarlo.",
+    "echoHidden_other": "Se ocultaron o acortaron {{count}} fragmentos del micrófono que repetían el audio de la llamada (eco de los parlantes). Usa audífonos para evitarlo."
   }
 }

@@ -1405,7 +1405,7 @@ assignee_confidence?: string | null;
 /**
  * Notion board suggested for the task, with the reason.
  */
-notion_database_id?: string | null; notion_database_title?: string | null; notion_database_reason?: string | null; 
+notion_database_id?: string | null; notion_database_title?: string | null; notion_database_reason?: string | null; notion_database_confidence?: string | null; 
 /**
  * Official project/client name (e.g. "PeopleZat"); `None` = no project.
  * Editable through `update_action_item` edits as `{"project": "..."}`

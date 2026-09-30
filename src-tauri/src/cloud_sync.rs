@@ -97,6 +97,9 @@ pub struct CloudActionItem {
     pub notion_database_title: Option<String>,
     #[serde(default)]
     pub notion_database_reason: Option<String>,
+    /// How sure the backend is about the suggested board: "high" | "medium" | "low".
+    #[serde(default)]
+    pub notion_database_confidence: Option<String>,
     /// Official project/client name (e.g. "PeopleZat"); `None` = no project.
     /// Editable through `update_action_item` edits as `{"project": "..."}`
     /// (`""` clears it).
