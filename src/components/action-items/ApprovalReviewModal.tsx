@@ -4,9 +4,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Check,
-  Database,
   Loader2,
-  RotateCcw,
   Send,
   Video,
   X,
@@ -34,20 +32,13 @@ interface EditableItem {
   meeting_title: string;
   /** Groups tasks by meeting: two meetings can share a title ("Daily"). */
   meeting_key: string;
-  /** Board the backend suggested for this task ("" = none). */
-  suggested_board_id: string;
-  suggested_board_title: string;
-  suggested_board_reason: string;
-  /** false once the user sends this one task to the general board instead. */
-  use_suggested_board: boolean;
 }
 
 type EditableField =
   | "description"
   | "assignee"
   | "due_date"
-  | "task_type"
-  | "use_suggested_board";
+  | "task_type";
 
 // Select values that aren't Notion user ids.
 const NO_ASSIGNEE = "";
@@ -74,8 +65,7 @@ const fieldInput =
  *  1. Where the tasks go (Notion / calendars). Checking Notion reveals the one
  *     board picker (plus the column for new cards).
  *  2. The tasks, grouped by meeting: owner, due date and Pending vs. Previous.
- *     A task only shows a board when the backend suggested a *different* one
- *     than the general pick; the user can keep that suggestion or drop it.
+ *     Every task goes to the board picked here: never to a suggested one.
  *  3. Warnings and the approve button.
  */
 /** A stored date as the date input's value ("YYYY-MM-DD"); "" when there is none. */
@@ -124,10 +114,6 @@ export function ApprovalReviewModal({
         meeting_title:
           i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
         meeting_key: i.meeting_id ?? i.meeting_name ?? i.meeting_title ?? "",
-        suggested_board_id: i.notion_database_id ?? "",
-        suggested_board_title: i.notion_database_title ?? "",
-        suggested_board_reason: i.notion_database_reason ?? "",
-        use_suggested_board: true,
       };
     }),
   );
@@ -155,15 +141,11 @@ export function ApprovalReviewModal({
   const [notionStatus, setNotionStatus] = useState(
     notionConfig?.todo_status ?? "",
   );
-  const [useSuggestedBoards, setUseSuggestedBoards] = useState(true);
 
   const sendsToNotion = targets.has("notion");
   const boardsLoaded = config.notionDbs.length > 0;
   const notionStatusOpts = config.notionStatuses[notionDbId] ?? [];
 
-  const boardName = (id: string, fallback = "") =>
-    config.notionDbs.find((db) => db.id === id)?.name || fallback || "—";
-  const generalBoardName = boardName(notionDbId);
 
   const toggleTarget = (p: string) =>
     setTargets((prev) => {
@@ -174,14 +156,6 @@ export function ApprovalReviewModal({
     });
 
   // ── Per-task boards ──
-  /** The backend suggested a board other than the general one for this task. */
-  const hasOtherSuggestion = (item: EditableItem) =>
-    !!item.suggested_board_id && item.suggested_board_id !== notionDbId;
-  const suggestedCount = editableItems.filter(hasOtherSuggestion).length;
-  const goesToSuggested = (item: EditableItem) =>
-    useSuggestedBoards && item.use_suggested_board && hasOtherSuggestion(item);
-  const effectiveBoard = (item: EditableItem) =>
-    goesToSuggested(item) ? item.suggested_board_id : notionDbId;
 
   // ── Item edits ──
   const updateItem = <K extends EditableField>(
@@ -223,10 +197,8 @@ export function ApprovalReviewModal({
       ).length
     : 0;
   // Only block when the board list is loaded; otherwise the backend default applies.
-  const itemsMissingBoard =
-    sendsToNotion && boardsLoaded
-      ? editableItems.filter((i) => !effectiveBoard(i)).length
-      : 0;
+  // Notion needs a board picked by the user: no board, no approval.
+  const itemsMissingBoard = sendsToNotion && !notionDbId ? editableItems.length : 0;
   const canConfirm = !submitting && targets.size > 0 && itemsMissingBoard === 0;
 
   const handleConfirm = () => {
@@ -260,8 +232,8 @@ export function ApprovalReviewModal({
         edited.task_type !== TASK_TYPE_PREVIOUS
       )
         changed.notion_status = notionStatus;
-      // Each task goes to its suggested board (if kept) or the general one.
-      const board = effectiveBoard(edited);
+      // Always the board picked in this window.
+      const board = notionDbId;
       if (sendsToNotion && board) changed.notion_database_id = board;
       edits[edited.id] = changed;
     }
@@ -425,30 +397,6 @@ export function ApprovalReviewModal({
                   </p>
                 )}
 
-                {suggestedCount > 0 && (
-                  <label className="flex items-start gap-2 pt-1 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={useSuggestedBoards}
-                      onChange={(e) => setUseSuggestedBoards(e.target.checked)}
-                      className="mt-0.5 accent-lezat-sage"
-                    />
-                    <span className="flex flex-col">
-                      <span className="text-xs">
-                        {t("actionItems.review.useSuggested", {
-                          count: suggestedCount,
-                        })}
-                      </span>
-                      {notionDbId && (
-                        <span className="text-[10px] text-mid-gray">
-                          {t("actionItems.review.useSuggestedHint", {
-                            name: generalBoardName,
-                          })}
-                        </span>
-                      )}
-                    </span>
-                  </label>
-                )}
               </div>
             )}
           </div>
@@ -494,16 +442,6 @@ export function ApprovalReviewModal({
                             key={item.id}
                             item={item}
                             config={config}
-                            showBoard={
-                              sendsToNotion &&
-                              useSuggestedBoards &&
-                              hasOtherSuggestion(item)
-                            }
-                            suggestedBoardName={boardName(
-                              item.suggested_board_id,
-                              item.suggested_board_title,
-                            )}
-                            generalBoardName={generalBoardName}
                             onChange={updateItem}
                             onSelectAssignee={selectAssignee}
                           />
@@ -574,18 +512,11 @@ export function ApprovalReviewModal({
 function TaskCard({
   item,
   config,
-  showBoard,
-  suggestedBoardName,
-  generalBoardName,
   onChange,
   onSelectAssignee,
 }: {
   item: EditableItem;
   config: PreloadedConfig;
-  /** The task has its own suggested board (different from the general one). */
-  showBoard: boolean;
-  suggestedBoardName: string;
-  generalBoardName: string;
   onChange: <K extends EditableField>(
     id: string,
     field: K,
@@ -689,48 +620,6 @@ function TaskCard({
         )}
       </div>
 
-      {/* Own board: only when the suggestion differs from the general board */}
-      {showBoard &&
-        (item.use_suggested_board ? (
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <span
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-lezat-sage/15 text-text"
-              title={item.suggested_board_reason || undefined}
-            >
-              <Database className="w-3 h-3 text-lezat-sage" />
-              {t("actionItems.review.goesToBoard", {
-                name: suggestedBoardName,
-              })}
-              <span className="text-mid-gray">
-                {t("actionItems.review.suggested")}
-              </span>
-              <button
-                type="button"
-                onClick={() => onChange(item.id, "use_suggested_board", false)}
-                title={t("actionItems.review.sendToGeneral", {
-                  name: generalBoardName,
-                })}
-                aria-label={t("actionItems.review.sendToGeneral", {
-                  name: generalBoardName,
-                })}
-                className="ml-0.5 p-0.5 rounded-full hover:bg-mid-gray/20"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onChange(item.id, "use_suggested_board", true)}
-            className="self-start flex items-center gap-1 text-[11px] text-mid-gray hover:text-text"
-          >
-            <RotateCcw className="w-3 h-3" />
-            {t("actionItems.review.useSuggestedFor", {
-              name: suggestedBoardName,
-            })}
-          </button>
-        ))}
     </div>
   );
 }

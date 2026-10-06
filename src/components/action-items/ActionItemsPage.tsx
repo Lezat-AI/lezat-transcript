@@ -742,15 +742,6 @@ const ActionItemRow = React.memo(function ActionItemRow({
               {formatDate(item.due_date)}
             </span>
           )}
-          {isPending && item.notion_database_title && (
-            <span
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-mid-gray/8"
-              title={item.notion_database_reason ?? undefined}
-            >
-              <Database className="w-2.5 h-2.5" />
-              {item.notion_database_title}
-            </span>
-          )}
           {item.synced_to.map((s: string) => (
             <span
               key={s}
