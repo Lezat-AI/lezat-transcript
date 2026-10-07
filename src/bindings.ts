@@ -898,6 +898,25 @@ async exportMeetingAudio(id: number, track: string, destination: string) : Promi
 async getSystemAudioAvailability() : Promise<SystemAudioAvailability> {
     return await TAURI_INVOKE("get_system_audio_availability");
 },
+/**
+ * Replace the participants of a meeting (the active one or a past one).
+ * They're sent with the next upload of that meeting.
+ */
+async setMeetingParticipants(id: number, participants: MeetingParticipant[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_meeting_participants", { id, participants }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The default output device and whether it looks like headphones, for the
+ * "use headphones" hint while capturing system audio.
+ */
+async getOutputDeviceHint() : Promise<OutputDeviceHint> {
+    return await TAURI_INVOKE("get_output_device_hint");
+},
 async changeCaptureSystemAudioSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_capture_system_audio_setting", { enabled }) };
@@ -1288,6 +1307,7 @@ cloudSyncEvent: CloudSyncEvent,
 googleLoginEvent: GoogleLoginEvent,
 historyUpdatePayload: HistoryUpdatePayload,
 integrationOAuthEvent: IntegrationOAuthEvent,
+meetingCalendarContextEvent: MeetingCalendarContextEvent,
 meetingStateEvent: MeetingStateEvent,
 meetingTranscriptChunkEvent: MeetingTranscriptChunkEvent
 }>({
@@ -1295,6 +1315,7 @@ cloudSyncEvent: "cloud-sync-event",
 googleLoginEvent: "google-login-event",
 historyUpdatePayload: "history-update-payload",
 integrationOAuthEvent: "integration-o-auth-event",
+meetingCalendarContextEvent: "meeting-calendar-context-event",
 meetingStateEvent: "meeting-state-event",
 meetingTranscriptChunkEvent: "meeting-transcript-chunk-event"
 })
@@ -1405,7 +1426,7 @@ assignee_confidence?: string | null;
 /**
  * Notion board suggested for the task, with the reason.
  */
-notion_database_id?: string | null; notion_database_title?: string | null; notion_database_reason?: string | null; notion_database_confidence?: string | null; 
+
 /**
  * Official project/client name (e.g. "PeopleZat"); `None` = no project.
  * Editable through `update_action_item` edits as `{"project": "..."}`
@@ -1442,6 +1463,10 @@ export type IntegrationsStatusResponse = { integrations: IntegrationStatus[] }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * Emitted once the calendar lookup for a meeting finishes.
+ */
+export type MeetingCalendarContextEvent = { meeting_id: number; calendar_event_id: string | null; calendar_event_title: string | null; participants: MeetingParticipant[] }
 export type MeetingChunk = { 
 /**
  * ms offset from meeting start
@@ -1451,7 +1476,19 @@ offset_ms: number;
  * "mic" or "system" (second reserved for dual-stream work)
  */
 source: string; text: string }
-export type MeetingRecord = { id: number; started_at: number; ended_at: number | null; title: string; duration_ms: number; transcript_text: string; chunks: MeetingChunk[]; audio_path: string | null; is_daily?: boolean }
+/**
+ * One meeting attendee. Names added by hand have no email.
+ */
+export type MeetingParticipant = { name: string; email?: string | null }
+export type MeetingRecord = { id: number; started_at: number; ended_at: number | null; title: string; duration_ms: number; transcript_text: string; chunks: MeetingChunk[]; audio_path: string | null; is_daily?: boolean; 
+/**
+ * Calendar event the recording was matched to, if any.
+ */
+calendar_event_id?: string | null; calendar_event_title?: string | null; 
+/**
+ * Attendees: detected from the calendar and/or edited by the user.
+ */
+participants?: MeetingParticipant[] }
 export type MeetingStateEvent = { state: "started"; meeting_id: number; title: string } | { state: "stopped"; meeting_id: number } | { state: "error"; meeting_id: number | null; message: string }
 export type MeetingTranscriptChunkEvent = { meeting_id: number; chunk: MeetingChunk }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
@@ -1465,6 +1502,14 @@ export type NotionDatabase = { id: string; name: string }
 export type NotionPerson = { id: string; name: string; email?: string | null }
 export type OAuthConnectResponse = { oauth_url: string; state: string | null }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
+/**
+ * What the default output device looks like, for the "use headphones" hint.
+ */
+export type OutputDeviceHint = { name: string | null; 
+/**
+ * "headphones" | "speakers" | "unknown"
+ */
+kind: string }
 export type OverlayPosition = "none" | "top" | "bottom"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"

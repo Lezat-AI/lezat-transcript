@@ -24,6 +24,8 @@ const WHISPER_SR: u32 = 16_000;
 enum Cmd {
     Start,
     Stop(Sender<Vec<f32>>),
+    /// Hand over the samples captured so far and keep recording.
+    Drain(Sender<Vec<f32>>),
     Shutdown,
 }
 
@@ -78,6 +80,14 @@ impl WasapiLoopbackRecorder {
         let (tx, rx) = mpsc::channel();
         self.send(Cmd::Stop(tx))?;
         rx.recv().map_err(|e| anyhow!("WASAPI stop response: {e}"))
+    }
+
+    /// Take the samples captured so far and keep recording.
+    pub fn drain(&self) -> Result<Vec<f32>> {
+        let (tx, rx) = mpsc::channel();
+        self.send(Cmd::Drain(tx))?;
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|e| anyhow!("WASAPI drain timed out: {e}"))
     }
 
     pub fn close(&mut self) -> Result<()> {
@@ -153,6 +163,15 @@ fn run_worker(cmd_rx: Receiver<Cmd>, ready_tx: mpsc::SyncSender<Result<()>>) {
                     buffer.clear();
                     let _ = tx.send(out);
                     debug!("WASAPI loopback: recording stopped");
+                }
+                Ok(Cmd::Drain(tx)) => {
+                    let out = if sample_rate == WHISPER_SR {
+                        std::mem::take(&mut buffer)
+                    } else {
+                        resample_to_16k(&buffer, sample_rate)
+                    };
+                    buffer.clear();
+                    let _ = tx.send(out);
                 }
                 Ok(Cmd::Shutdown) => {
                     let _ = audio_client.stop_stream();

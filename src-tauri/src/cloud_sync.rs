@@ -5,6 +5,7 @@
 //! The backend is a Python FastAPI application with endpoints under `/api/desktop/*`.
 
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, SecondsFormat, Utc};
 use log::{info, warn};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use std::net::TcpListener;
 use std::time::Duration;
 use tauri_specta::Event;
 
-use crate::managers::meeting::MeetingRecord;
+use crate::managers::meeting::{MeetingParticipant, MeetingRecord};
 use crate::settings::AppSettings;
 
 // ─────────────────────────── events ───────────────────────────────
@@ -50,6 +51,20 @@ struct DesktopMeetingPayload {
     /// Per-source chunk outcomes (captured/silent/failed...), no content.
     #[serde(skip_serializing_if = "Option::is_none")]
     client_diagnostics: Option<serde_json::Value>,
+    /// Calendar event the recording was matched to, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    calendar_event_id: Option<String>,
+    /// Attendees confirmed in the app. Omitted when the user has none, so the
+    /// backend falls back to its own calendar lookup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    participants: Option<Vec<ParticipantPayload>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ParticipantPayload {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -90,16 +105,6 @@ pub struct CloudActionItem {
     /// How sure the backend is about the owner: "high" | "medium" | "low".
     #[serde(default)]
     pub assignee_confidence: Option<String>,
-    /// Notion board suggested for the task, with the reason.
-    #[serde(default)]
-    pub notion_database_id: Option<String>,
-    #[serde(default)]
-    pub notion_database_title: Option<String>,
-    #[serde(default)]
-    pub notion_database_reason: Option<String>,
-    /// How sure the backend is about the suggested board: "high" | "medium" | "low".
-    #[serde(default)]
-    pub notion_database_confidence: Option<String>,
     /// Official project/client name (e.g. "PeopleZat"); `None` = no project.
     /// Editable through `update_action_item` edits as `{"project": "..."}`
     /// (`""` clears it).
@@ -351,7 +356,21 @@ fn sync_meeting_to_cloud_inner(
     let url = format!("{}/api/desktop/ingest", base_url(settings)?);
     let key = api_key(settings)?;
 
-    let payload = DesktopMeetingPayload {
+    let participants: Vec<ParticipantPayload> = record
+        .participants
+        .iter()
+        .filter(|p| !p.name.trim().is_empty() || p.email.is_some())
+        .map(|p| ParticipantPayload {
+            name: p.name.trim().to_string(),
+            email: p
+                .email
+                .as_ref()
+                .map(|e| e.trim().to_string())
+                .filter(|e| !e.is_empty()),
+        })
+        .collect();
+
+    let mut payload = DesktopMeetingPayload {
         device_id: settings.device_id.clone(),
         local_meeting_id: record.id,
         title: record.title.clone(),
@@ -373,6 +392,12 @@ fn sync_meeting_to_cloud_inner(
         is_daily: record.is_daily,
         force_reprocess,
         client_diagnostics,
+        calendar_event_id: record.calendar_event_id.clone(),
+        participants: if participants.is_empty() {
+            None
+        } else {
+            Some(participants)
+        },
     };
 
     // Processing a long meeting (task extraction, owners, boards) takes well
@@ -384,7 +409,9 @@ fn sync_meeting_to_cloud_inner(
         .map_err(|e| anyhow!("Failed to build HTTP client: {e}"))?;
     let backoff = [1, 3, 9]; // seconds
 
-    for (attempt, delay_secs) in backoff.iter().enumerate() {
+    let mut attempt = 0;
+    while attempt < backoff.len() {
+        let delay_secs = backoff[attempt];
         let result = client
             .post(&url)
             .header("X-API-Key", key)
@@ -403,6 +430,17 @@ fn sync_meeting_to_cloud_inner(
             }
             Ok(resp) if resp.status().as_u16() == 422 => {
                 let body = resp.text().unwrap_or_default();
+                // Older backends reject attendees without an email. The
+                // meeting matters more than its attendee list, so retry once
+                // without the calendar context instead of failing the upload.
+                if payload.participants.is_some() || payload.calendar_event_id.is_some() {
+                    warn!(
+                        "Cloud sync: backend rejected calendar context (HTTP 422), retrying without it — {body}"
+                    );
+                    payload.participants = None;
+                    payload.calendar_event_id = None;
+                    continue; // same attempt, no backoff
+                }
                 return Err(anyhow!("Validation error (HTTP 422): {body}"));
             }
             Ok(resp) if resp.status().is_server_error() => {
@@ -430,14 +468,156 @@ fn sync_meeting_to_cloud_inner(
         }
 
         if attempt < backoff.len() - 1 {
-            std::thread::sleep(Duration::from_secs(*delay_secs));
+            std::thread::sleep(Duration::from_secs(delay_secs));
         }
+        attempt += 1;
     }
 
     Err(anyhow!(
         "Cloud sync failed after {} attempts",
         backoff.len()
     ))
+}
+
+// ─────────────────────────── calendar ─────────────────────────────
+
+/// One event from the user's connected calendar(s).
+#[derive(Debug, Deserialize, Clone)]
+pub struct CalendarEvent {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// ISO-8601 start/end. All-day events may come as a bare date.
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub end: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub attendees: Vec<CalendarAttendee>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CalendarAttendee {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+}
+
+impl CalendarEvent {
+    /// Attendees as meeting participants; falls back to the email's local
+    /// part when the calendar has no display name.
+    pub fn participants(&self) -> Vec<MeetingParticipant> {
+        self.attendees
+            .iter()
+            .filter_map(|a| {
+                let email = a
+                    .email
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|e| !e.is_empty())
+                    .map(str::to_string);
+                let name = a
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        email
+                            .as_deref()
+                            .and_then(|e| e.split('@').next())
+                            .map(str::to_string)
+                    })?;
+                Some(MeetingParticipant { name, email })
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarEventsResponse {
+    #[serde(default)]
+    events: Vec<CalendarEvent>,
+}
+
+/// Events overlapping `[start, end]`. An empty list when no calendar is
+/// connected or the backend predates the endpoint (HTTP 404).
+pub fn fetch_calendar_events(
+    settings: &AppSettings,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<CalendarEvent>> {
+    let url = format!("{}/api/desktop/calendar/events", base_url(settings)?);
+    let key = api_key(settings)?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| anyhow!("Failed to build HTTP client: {e}"))?;
+
+    let resp = client
+        .get(&url)
+        .query(&[
+            ("start", start.to_rfc3339_opts(SecondsFormat::Secs, true)),
+            ("end", end.to_rfc3339_opts(SecondsFormat::Secs, true)),
+        ])
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+
+    let status = resp.status();
+    if status.as_u16() == 404 {
+        return Ok(Vec::new());
+    }
+    let body = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Failed to fetch calendar events (HTTP {status}): {}",
+            &body[..body.len().min(300)]
+        ));
+    }
+    serde_json::from_str::<CalendarEventsResponse>(&body)
+        .map(|r| r.events)
+        .map_err(|e| anyhow!("Failed to parse calendar events: {e}"))
+}
+
+/// Events longer than this are all-day blocks / OOO, not the meeting.
+const MAX_MEETING_EVENT_SECONDS: i64 = 12 * 60 * 60;
+
+fn parse_event_time(value: Option<&str>) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value?)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+/// The event that overlaps `[rec_start, rec_end]` the most. Ties go to the
+/// event that starts closest to the recording.
+pub fn pick_best_event(
+    events: &[CalendarEvent],
+    rec_start: DateTime<Utc>,
+    rec_end: DateTime<Utc>,
+) -> Option<&CalendarEvent> {
+    events
+        .iter()
+        .filter_map(|ev| {
+            let start = parse_event_time(ev.start.as_deref())?;
+            let end = parse_event_time(ev.end.as_deref())?;
+            let length = (end - start).num_seconds();
+            if length <= 0 || length > MAX_MEETING_EVENT_SECONDS {
+                return None;
+            }
+            let overlap = (end.min(rec_end) - start.max(rec_start)).num_seconds();
+            if overlap <= 0 {
+                return None;
+            }
+            let distance = (start - rec_start).num_seconds().abs();
+            Some((overlap, -distance, ev))
+        })
+        .max_by_key(|(overlap, neg_distance, _)| (*overlap, *neg_distance))
+        .map(|(_, _, ev)| ev)
 }
 
 /// Fetch action items from the backend.
@@ -1352,4 +1532,69 @@ pub fn ai_suggest_timesheet(
 
     let body = resp.text()?;
     serde_json::from_str(&body).map_err(|e| anyhow!("Invalid JSON from AI suggest: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(id: &str, start: &str, end: &str) -> CalendarEvent {
+        CalendarEvent {
+            id: id.to_string(),
+            title: Some(id.to_string()),
+            start: Some(start.to_string()),
+            end: Some(end.to_string()),
+            provider: None,
+            attendees: Vec::new(),
+        }
+    }
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s)
+            .expect("valid test timestamp")
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn picks_event_with_largest_overlap() {
+        let events = vec![
+            event("early", "2026-10-07T09:00:00Z", "2026-10-07T09:30:00Z"),
+            event("main", "2026-10-07T09:30:00Z", "2026-10-07T10:30:00Z"),
+        ];
+        let best = pick_best_event(
+            &events,
+            at("2026-10-07T09:25:00Z"),
+            at("2026-10-07T10:20:00Z"),
+        );
+        assert_eq!(best.map(|e| e.id.as_str()), Some("main"));
+    }
+
+    #[test]
+    fn ignores_all_day_and_unparseable_events() {
+        let events = vec![
+            event("allday", "2026-10-07", "2026-10-08"),
+            event("ooo", "2026-10-07T00:00:00Z", "2026-10-08T00:00:00Z"),
+        ];
+        let best = pick_best_event(
+            &events,
+            at("2026-10-07T09:00:00Z"),
+            at("2026-10-07T10:00:00Z"),
+        );
+        assert!(best.is_none());
+    }
+
+    #[test]
+    fn no_event_when_nothing_overlaps() {
+        let events = vec![event(
+            "later",
+            "2026-10-07T15:00:00-05:00",
+            "2026-10-07T16:00:00-05:00",
+        )];
+        let best = pick_best_event(
+            &events,
+            at("2026-10-07T09:00:00Z"),
+            at("2026-10-07T10:00:00Z"),
+        );
+        assert!(best.is_none());
+    }
 }

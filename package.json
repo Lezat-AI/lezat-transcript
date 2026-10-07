@@ -2,6 +2,7 @@
   "name": "lezat-transcript",
   "private": true,
   "version": "0.8.2",
+  "lezatMinVersion": "",
   "type": "module",
   "scripts": {
     "dev": "vite",

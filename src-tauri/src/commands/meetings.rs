@@ -7,7 +7,9 @@ use specta::Type;
 use tauri::{AppHandle, Manager, State};
 
 use crate::audio_toolkit::system_audio::{resolve_system_audio_device, SystemAudioStatus};
-use crate::managers::meeting::{MeetingManager, MeetingRecord};
+use crate::managers::meeting::{
+    output_device_hint, MeetingManager, MeetingParticipant, MeetingRecord, OutputDeviceHint,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(tag = "state")]
@@ -97,6 +99,27 @@ pub fn rename_meeting(
     title: String,
 ) -> Result<(), String> {
     mgr.store().rename(id, &title).map_err(|e| e.to_string())
+}
+
+/// Replace the participants of a meeting (the active one or a past one).
+/// They're sent with the next upload of that meeting.
+#[tauri::command]
+#[specta::specta]
+pub fn set_meeting_participants(
+    mgr: State<Arc<MeetingManager>>,
+    id: i64,
+    participants: Vec<MeetingParticipant>,
+) -> Result<(), String> {
+    mgr.set_participants(id, participants)
+        .map_err(|e| e.to_string())
+}
+
+/// The default output device and whether it looks like headphones, for the
+/// "use headphones" hint while capturing system audio.
+#[tauri::command]
+#[specta::specta]
+pub fn get_output_device_hint() -> OutputDeviceHint {
+    output_device_hint()
 }
 
 /// Copy one of a meeting's audio tracks (mic.wav or system.wav) to a path

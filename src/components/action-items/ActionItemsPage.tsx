@@ -10,10 +10,21 @@ import {
   formatDate,
   type IntegrationInfo,
   type ItemEdits,
+  type NotionPersonOption,
   type PreloadedConfig,
   type SelectOption,
   TASK_TYPE_PREVIOUS,
 } from "./shared";
+import {
+  applyEdits,
+  draftEdits,
+  draftProblem,
+  isDraftDirty,
+  makeDraft,
+  type TaskDraft,
+  TaskFields,
+  TaskTypeSwitch,
+} from "./TaskEditor";
 
 import {
   CheckCircle2,
@@ -26,7 +37,6 @@ import {
   Video,
   X,
   Send,
-  Database,
   CheckSquare,
   Square,
   MinusSquare,
@@ -513,6 +523,7 @@ function TimesheetDialog({
 
 function BulkApprovalBar({
   selectedCount,
+  unsavedCount,
   hasPreviousTasks,
   onApprove,
   onMoveToProject,
@@ -520,6 +531,8 @@ function BulkApprovalBar({
   onClear,
 }: {
   selectedCount: number;
+  /** Selected tasks with edits not saved yet; the approval window starts from them. */
+  unsavedCount: number;
   hasPreviousTasks: boolean;
   onApprove: () => void;
   onMoveToProject: (project: string | null) => void;
@@ -538,6 +551,12 @@ function BulkApprovalBar({
           {t("actionItems.bulk.clear")}
         </button>
       </div>
+      {unsavedCount > 0 && (
+        <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          {t("actionItems.edit.unsavedInApproval", { count: unsavedCount })}
+        </p>
+      )}
 
       <div className="flex items-center gap-2 justify-end flex-wrap">
         <label className="flex items-center gap-1.5 text-xs text-mid-gray">
@@ -633,28 +652,157 @@ const SYNCED_LABELS: Record<string, string> = {
   outlook_calendar: "Outlook",
 };
 
+/**
+ * Inline editing of pending tasks on the page. A task is being edited while it
+ * has a draft; the draft is also what the approval modal starts from, so
+ * unsaved changes are never lost by opening it.
+ */
+interface InlineEditing {
+  drafts: Record<string, TaskDraft>;
+  saving: Set<string>;
+  errors: Record<string, string>;
+  people: NotionPersonOption[];
+  onStart: (item: CloudActionItem) => void;
+  onChange: (id: string, patch: Partial<TaskDraft>) => void;
+  onCancel: (id: string) => void;
+  onSave: (item: CloudActionItem) => void;
+}
+
+/** Edit form shown under a pending task on the page. */
+function InlineTaskEditor({
+  item,
+  draft,
+  people,
+  saving,
+  error,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  item: CloudActionItem;
+  draft: TaskDraft;
+  people: NotionPersonOption[];
+  saving: boolean;
+  error?: string;
+  onChange: (id: string, patch: Partial<TaskDraft>) => void;
+  onCancel: (id: string) => void;
+  onSave: (item: CloudActionItem) => void;
+}) {
+  const { t } = useTranslation();
+  const dirty = isDraftDirty(draft, item, people);
+  const problem = draftProblem(draft, item);
+
+  return (
+    <div
+      className="mt-2 rounded-lg border border-lezat-sage/30 bg-lezat-sage/[0.04] p-3 flex flex-col gap-2.5"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !saving) onCancel(item.id);
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[10px] font-medium text-mid-gray uppercase tracking-wide">
+          {t("actionItems.edit.heading")}
+        </span>
+        <TaskTypeSwitch
+          value={draft.task_type}
+          onChange={(value) => onChange(item.id, { task_type: value })}
+          disabled={saving}
+        />
+      </div>
+
+      <TaskFields
+        draft={draft}
+        people={people}
+        onChange={(patch) => onChange(item.id, patch)}
+        disabled={saving}
+      />
+
+      {problem && (
+        <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          {t(problem)}
+        </p>
+      )}
+      {error && (
+        <p className="text-[11px] text-red-500 flex items-start gap-1.5 break-words">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+          {error}
+        </p>
+      )}
+
+      <div className="flex items-center justify-end gap-2">
+        {dirty && !saving && (
+          <span className="mr-auto text-[10px] text-amber-500">
+            {t("actionItems.edit.unsaved")}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => onCancel(item.id)}
+          disabled={saving}
+          className="px-3 py-1 text-xs font-medium rounded-lg border border-mid-gray/20 hover:bg-mid-gray/10 disabled:opacity-50 transition-colors"
+        >
+          {dirty ? t("actionItems.edit.discard") : t("actionItems.edit.close")}
+        </button>
+        <button
+          type="button"
+          onClick={() => onSave(item)}
+          disabled={saving || !dirty || problem !== null}
+          className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg bg-lezat-sage text-[#0d0d1a] hover:bg-lezat-sage/80 disabled:opacity-50 transition-colors"
+        >
+          {saving ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Check className="w-3 h-3" />
+          )}
+          {saving ? t("actionItems.edit.saving") : t("actionItems.edit.save")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const ActionItemRow = React.memo(function ActionItemRow({
   item,
   isSelected,
   timesheetEntryId,
+  draft,
+  isSaving,
+  saveError,
+  people,
   onToggleSelect,
   onUnapprove,
   onChangeProject,
   onTimesheetEdit,
   onTimesheetDelete,
+  onStartEdit,
+  onDraftChange,
+  onCancelEdit,
+  onSaveEdit,
 }: {
   item: CloudActionItem;
   isSelected: boolean;
   timesheetEntryId?: number;
+  /** Present while the task is being edited on the page. */
+  draft?: TaskDraft;
+  isSaving: boolean;
+  saveError?: string;
+  people: NotionPersonOption[];
   onToggleSelect: (id: string) => void;
   onUnapprove: (item: CloudActionItem) => void;
   onChangeProject: (ids: string[], project: string | null) => void;
   onTimesheetEdit: (item: CloudActionItem, entryId: number) => void;
   onTimesheetDelete: (item: CloudActionItem, entryId: number) => void;
+  onStartEdit: (item: CloudActionItem) => void;
+  onDraftChange: (id: string, patch: Partial<TaskDraft>) => void;
+  onCancelEdit: (id: string) => void;
+  onSaveEdit: (item: CloudActionItem) => void;
 }) {
   const { t } = useTranslation();
   const isPending = item.status !== "completed";
   const hasTimesheetEntry = timesheetEntryId != null;
+  // Approved tasks were already sent: they are read-only here.
+  const isEditing = isPending && draft != null;
 
   return (
     <div
@@ -684,12 +832,25 @@ const ActionItemRow = React.memo(function ActionItemRow({
       )}
 
       <div className="flex-1 min-w-0">
-        <p className={`text-sm leading-relaxed ${
-          item.status === "completed" ? "line-through opacity-50" : ""
-        }`}>
-          {item.title || item.description || "—"}
-        </p>
-        {item.title && item.description && (
+        <div className="flex items-start gap-2">
+          <p className={`flex-1 min-w-0 text-sm leading-relaxed ${
+            item.status === "completed" ? "line-through opacity-50" : ""
+          }`}>
+            {item.title || item.description || "—"}
+          </p>
+          {isPending && !isEditing && (
+            <button
+              type="button"
+              onClick={() => onStartEdit(item)}
+              className="shrink-0 mt-0.5 p-1 rounded text-mid-gray opacity-60 hover:opacity-100 hover:text-text hover:bg-mid-gray/10 transition"
+              title={t("actionItems.edit.start")}
+              aria-label={t("actionItems.edit.start")}
+            >
+              <Pencil className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+        {item.title && item.description && !isEditing && (
           <p className={`text-xs text-mid-gray leading-relaxed line-clamp-2 ${isPending ? "" : "opacity-60"}`}>
             {item.description}
           </p>
@@ -730,13 +891,13 @@ const ActionItemRow = React.memo(function ActionItemRow({
               </button>
             </span>
           )}
-          {item.assignee && (
+          {item.assignee && !isEditing && (
             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-mid-gray/8">
               <User className="w-2.5 h-2.5" />
               {item.assignee}
             </span>
           )}
-          {item.due_date && (
+          {item.due_date && !isEditing && (
             <span className="flex items-center gap-1">
               <CalendarDays className="w-2.5 h-2.5" />
               {formatDate(item.due_date)}
@@ -753,6 +914,18 @@ const ActionItemRow = React.memo(function ActionItemRow({
             </span>
           ))}
         </div>
+        {isEditing && draft && (
+          <InlineTaskEditor
+            item={item}
+            draft={draft}
+            people={people}
+            saving={isSaving}
+            error={saveError}
+            onChange={onDraftChange}
+            onCancel={onCancelEdit}
+            onSave={onSaveEdit}
+          />
+        )}
       </div>
     </div>
   );
@@ -791,6 +964,7 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
   onChangeProject,
   onTimesheetEdit,
   onTimesheetDelete,
+  editing,
   t,
 }: {
   group: MeetingGroup;
@@ -805,6 +979,7 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
   onChangeProject: (ids: string[], project: string | null) => void;
   onTimesheetEdit: (item: CloudActionItem, entryId: number) => void;
   onTimesheetDelete: (item: CloudActionItem, entryId: number) => void;
+  editing: InlineEditing;
   t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
   const progress = group.total > 0 ? Math.round((group.completed / group.total) * 100) : 0;
@@ -833,6 +1008,14 @@ const MeetingGroupCard = React.memo(function MeetingGroupCard({
       onChangeProject={onChangeProject}
       onTimesheetEdit={onTimesheetEdit}
       onTimesheetDelete={onTimesheetDelete}
+      draft={editing.drafts[item.id]}
+      isSaving={editing.saving.has(item.id)}
+      saveError={editing.errors[item.id]}
+      people={editing.people}
+      onStartEdit={editing.onStart}
+      onDraftChange={editing.onChange}
+      onCancelEdit={editing.onCancel}
+      onSaveEdit={editing.onSave}
     />
   );
 
@@ -953,6 +1136,10 @@ export const ActionItemsPage: React.FC = () => {
     editEntryId?: number;
   } | null>(null);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  // Inline edits on the page, by task id (see InlineEditing).
+  const [drafts, setDrafts] = useState<Record<string, TaskDraft>>({});
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
 
   // Pre-loaded config (fetched once on mount, shared with all panels)
   const [preloaded, setPreloaded] = useState<PreloadedConfig>({
@@ -1090,6 +1277,119 @@ export const ActionItemsPage: React.FC = () => {
     });
   }, []);
 
+  // ── Inline editing ──
+
+  // Drop drafts of tasks that are gone or were approved meanwhile (read-only).
+  useEffect(() => {
+    const editable = new Set(items.filter((i) => i.status !== "completed").map((i) => i.id));
+    setDrafts((prev) => {
+      const stale = Object.keys(prev).filter((id) => !editable.has(id));
+      if (stale.length === 0) return prev;
+      const next = { ...prev };
+      for (const id of stale) delete next[id];
+      return next;
+    });
+  }, [items]);
+
+  const clearSaveError = (id: string) =>
+    setSaveErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+  const startEdit = useCallback(
+    (item: CloudActionItem) => {
+      if (item.status === "completed") return;
+      setDrafts((prev) =>
+        prev[item.id] ? prev : { ...prev, [item.id]: makeDraft(item, preloaded.notionPeople) },
+      );
+    },
+    [preloaded.notionPeople],
+  );
+
+  const changeDraft = useCallback((id: string, patch: Partial<TaskDraft>) => {
+    setDrafts((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], ...patch } } : prev));
+  }, []);
+
+  const cancelEdit = useCallback((id: string) => {
+    setDrafts((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    clearSaveError(id);
+  }, []);
+
+  // Save the task's edits in the backend without approving or sending it anywhere.
+  const saveEdit = useCallback(
+    async (item: CloudActionItem) => {
+      const draft = drafts[item.id];
+      if (!draft || item.status === "completed" || savingIds.has(item.id)) return;
+      const problem = draftProblem(draft, item);
+      if (problem) {
+        setSaveErrors((prev) => ({ ...prev, [item.id]: t(problem) }));
+        return;
+      }
+      const edits = draftEdits(draft, item);
+      if (Object.keys(edits).length === 0) {
+        cancelEdit(item.id);
+        return;
+      }
+      setSavingIds((prev) => new Set(prev).add(item.id));
+      clearSaveError(item.id);
+      try {
+        // Same status as now and no sync targets: only the fields are updated.
+        const r = await (commands as any).cloudUpdateActionItem(item.id, item.status, JSON.stringify(edits));
+        if (r.status === "ok") {
+          setItems((prev) => prev.map((i) => (i.id === item.id ? applyEdits(i, edits) : i)));
+          setDrafts((prev) => {
+            // Keep newer changes typed while saving; otherwise close the editor.
+            if (prev[item.id] !== draft) return prev;
+            const next = { ...prev };
+            delete next[item.id];
+            return next;
+          });
+        } else {
+          setSaveErrors((prev) => ({
+            ...prev,
+            [item.id]: t("actionItems.edit.saveFailed", { detail: r.error ?? "" }),
+          }));
+        }
+      } catch (e) {
+        setSaveErrors((prev) => ({
+          ...prev,
+          [item.id]: t("actionItems.edit.saveFailed", { detail: String(e) }),
+        }));
+      } finally {
+        setSavingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+      }
+    },
+    [drafts, savingIds, cancelEdit, t],
+  );
+
+  const editing: InlineEditing = {
+    drafts,
+    saving: savingIds,
+    errors: saveErrors,
+    people: preloaded.notionPeople,
+    onStart: startEdit,
+    onChange: changeDraft,
+    onCancel: cancelEdit,
+    onSave: saveEdit,
+  };
+
+  const unsavedSelected = Object.entries(drafts).filter(([id, draft]) => {
+    const item = items.find((i) => i.id === id);
+    return item != null && selected.has(id) && isDraftDirty(draft, item, preloaded.notionPeople);
+  }).length;
+
   // ── Approve helpers ──
 
   const handleOpenReviewModal = () => {
@@ -1143,20 +1443,18 @@ export const ActionItemsPage: React.FC = () => {
     // Update local items with edits + status change
     setItems((prev) => prev.map((i) => {
       if (!succeeded.has(i.id)) return i;
-      const itemEdits = edits[i.id];
       return {
-        ...i,
+        ...applyEdits(i, edits[i.id]),
         status: "completed",
         synced_to: Array.from(new Set([...(i.synced_to ?? []), ...syncTargets.filter((t) => t === "notion")])),
-        ...(itemEdits?.description != null ? { description: itemEdits.description } : {}),
-        ...(itemEdits?.assignee != null ? { assignee: itemEdits.assignee } : {}),
-        ...(itemEdits?.assignee_notion_user_id != null
-          ? { assignee_notion_user_id: itemEdits.assignee_notion_user_id }
-          : {}),
-        ...(itemEdits?.due_date != null ? { due_date: itemEdits.due_date } : {}),
-        ...(itemEdits?.task_type != null ? { task_type: itemEdits.task_type } : {}),
       };
     }));
+    // What the modal sent replaces the page's drafts of the approved tasks.
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const id of succeeded) delete next[id];
+      return next;
+    });
     // Tasks that failed stay selected so the user can retry them.
     setSelected(new Set(ids.filter((id) => !succeeded.has(id))));
     setReviewModalOpen(false);
@@ -1351,6 +1649,7 @@ export const ActionItemsPage: React.FC = () => {
               onChangeProject={handleChangeProject}
               onTimesheetEdit={openTimesheetEdit}
               onTimesheetDelete={handleInlineTimesheetDelete}
+              editing={editing}
               t={t}
             />
           ))}
@@ -1371,6 +1670,7 @@ export const ActionItemsPage: React.FC = () => {
       {selected.size > 0 && (
         <BulkApprovalBar
           selectedCount={selected.size}
+          unsavedCount={unsavedSelected}
           hasPreviousTasks={items.some((i) => selected.has(i.id) && i.task_type === "completed_previous")}
           onApprove={handleOpenReviewModal}
           onMoveToProject={(project) => handleChangeProject(Array.from(selected), project)}
@@ -1383,8 +1683,10 @@ export const ActionItemsPage: React.FC = () => {
       {reviewModalOpen && selected.size > 0 && (
         <ApprovalReviewModal
           items={items.filter((i) => selected.has(i.id))}
+          drafts={drafts}
           integrations={integrations}
           config={preloaded}
+          onExclude={toggleSelect}
           onConfirm={handleReviewConfirm}
           onClose={() => setReviewModalOpen(false)}
         />

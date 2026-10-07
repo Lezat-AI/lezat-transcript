@@ -282,6 +282,13 @@ jobs:
                   "pub_date": pub_date,
                   "platforms": platforms,
               }
+              # Oldest version still allowed to run. Older apps install this
+              # release without asking (see UpdateChecker.tsx). Set it in
+              # package.json "lezatMinVersion" when a release must reach
+              # everyone (e.g. a payload/chunking fix).
+              min_version = json.loads(pathlib.Path("package.json").read_text()).get("lezatMinVersion")
+              if min_version:
+                  manifest["min_version"] = str(min_version)
               pathlib.Path("latest.json").write_text(json.dumps(manifest, indent=2))
               print("--- latest.json ---")
               print(json.dumps(manifest, indent=2))

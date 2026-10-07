@@ -13,6 +13,14 @@
 ///   the other person speaks;
 /// - a whole mic chunk is dropped only when nothing but echo is left.
 ///
+/// Both sources are transcribed separately, so the same words can come back
+/// spelled differently ("Fireflies y FreeDayAI, que coloca" on the mic vs.
+/// "Firefly y Read AI que coloca" on system audio) and share no 3-word run. A
+/// second, fuzzy pass catches those: a whole mic sentence (at least
+/// `FUZZY_MIN_WORDS` words) is echo when it is at least `FUZZY_MIN_RATIO`
+/// similar (character level, accents and case ignored) to a run of system
+/// words said at about the same moment.
+///
 /// Mirrored by `app/services/echo_filter.py` in the backend; keep in sync.
 
 export type SourcedChunk = {
@@ -43,6 +51,14 @@ const MIN_ECHO_RUN = 4;
 /// amount hanging off a chunk edge next to echo is a word cut by the chunk
 /// boundary.
 const MAX_GAP = 2;
+/// Fuzzy pass: only sentences this long (shorter ones, "sí, claro", are as
+/// likely the user agreeing) and this similar to aligned system words.
+const FUZZY_MIN_WORDS = 5;
+const FUZZY_MIN_CHARS = 20;
+const FUZZY_MIN_RATIO = 80;
+/// System word runs compared to a mic sentence of n words: n-2 .. n+2 words.
+const FUZZY_LENGTH_SLACK = 2;
+const SENTENCE = /[^.!?…]+[.!?…]*/g;
 
 type Token = { norm: string; start: number; end: number };
 
@@ -104,6 +120,83 @@ function timedShingles(
   return out;
 }
 
+/// Similarity 0..100 like rapidfuzz's `fuzz.ratio`: 2·LCS / (|a| + |b|).
+function ratio(a: string, b: string): number {
+  if (!a.length && !b.length) return 100;
+  let prev = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array<number>(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] =
+        a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return (200 * prev[b.length]) / (a.length + b.length);
+}
+
+type TimedWord = [string, number];
+
+/// System words around a mic chunk, in order, with their estimated moment.
+function nearbySystemWords(
+  offsetMs: number,
+  system: Array<{ at: number; words: string[] }>,
+): TimedWord[] {
+  const out: TimedWord[] = [];
+  const near = system
+    .filter((s) => Math.abs(s.at - offsetMs) <= WINDOW_MS)
+    .sort((a, b) => a.at - b.at);
+  for (const s of near) {
+    const count = Math.max(s.words.length, 1);
+    s.words.forEach((w, i) =>
+      out.push([w, s.at + (CHUNK_MS * (i + 0.5)) / count]),
+    );
+  }
+  return out;
+}
+
+/// Mic words in whole sentences that closely resemble aligned system words.
+function fuzzyEchoMask(
+  text: string,
+  tokens: Token[],
+  offsetMs: number,
+  systemWords: TimedWord[],
+): boolean[] {
+  const n = tokens.length;
+  const mask = new Array<boolean>(n).fill(false);
+  if (!n || !systemWords.length) return mask;
+  for (const m of text.matchAll(SENTENCE)) {
+    const from = m.index ?? 0;
+    const to = from + m[0].length;
+    const indices: number[] = [];
+    tokens.forEach((t, k) => {
+      if (t.start >= from && t.start < to) indices.push(k);
+    });
+    if (indices.length < FUZZY_MIN_WORDS) continue;
+    const sentence = indices.map((k) => tokens[k].norm).join(" ");
+    if (sentence.length < FUZZY_MIN_CHARS) continue;
+    const moment =
+      offsetMs +
+      (CHUNK_MS * ((indices[0] + indices[indices.length - 1]) / 2 + 0.5)) / n;
+    const size = indices.length;
+    let best = 0;
+    for (
+      let length = Math.max(1, size - FUZZY_LENGTH_SLACK);
+      length <= size + FUZZY_LENGTH_SLACK;
+      length++
+    ) {
+      for (let start = 0; start + length <= systemWords.length; start++) {
+        const run = systemWords.slice(start, start + length);
+        const runMoment = (run[0][1] + run[run.length - 1][1]) / 2;
+        if (Math.abs(runMoment - moment) > ALIGN_MS) continue;
+        best = Math.max(best, ratio(sentence, run.map(([w]) => w).join(" ")));
+      }
+    }
+    if (best >= FUZZY_MIN_RATIO) for (const k of indices) mask[k] = true;
+  }
+  return mask;
+}
+
 /// Which mic tokens repeat the reference (system) shingles. Exported for tests.
 export function echoMask(tokens: string[], reference: Set<string>): boolean[] {
   const n = tokens.length;
@@ -142,13 +235,22 @@ export function echoMask(tokens: string[], reference: Set<string>): boolean[] {
 
 /// The mic text without the parts that repeat `reference`, or null when
 /// nothing but echo is left.
-function stripEcho(text: string, reference: Set<string>): string | null {
+function stripEcho(
+  text: string,
+  reference: Set<string>,
+  offsetMs = 0,
+  systemWords: TimedWord[] = [],
+): string | null {
   const tokens = tokenize(text);
-  if (tokens.length === 0 || reference.size === 0) return text;
-  const mask = echoMask(
+  if (tokens.length === 0 || (reference.size === 0 && !systemWords.length)) {
+    return text;
+  }
+  const exact = echoMask(
     tokens.map((t) => t.norm),
     reference,
   );
+  const fuzzy = fuzzyEchoMask(text, tokens, offsetMs, systemWords);
+  const mask = exact.map((hit, k) => hit || fuzzy[k]);
   if (!mask.some(Boolean)) return text;
   if (mask.every(Boolean)) return null;
 
@@ -219,7 +321,12 @@ export function removeMicEcho<T extends SourcedChunk>(
         reference.add(sh);
       }
     }
-    const text = stripEcho(c.text, reference);
+    const text = stripEcho(
+      c.text,
+      reference,
+      c.offset_ms,
+      nearbySystemWords(c.offset_ms, system),
+    );
     if (text === null) {
       removedChunks++;
     } else if (text !== c.text) {

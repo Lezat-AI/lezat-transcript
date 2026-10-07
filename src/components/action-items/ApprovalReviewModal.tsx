@@ -12,37 +12,30 @@ import {
 import {
   CALENDAR_TARGETS,
   type CloudActionItem,
-  findNotionPerson,
   type IntegrationInfo,
   type ItemEdits,
   type PreloadedConfig,
   TASK_TYPE_PENDING,
   TASK_TYPE_PREVIOUS,
 } from "./shared";
+import {
+  draftEdits,
+  draftProblem,
+  fieldInput,
+  fieldLabel,
+  makeDraft,
+  type TaskDraft,
+  TaskFields,
+  TaskTypeSwitch,
+} from "./TaskEditor";
 
-interface EditableItem {
+interface EditableItem extends TaskDraft {
   id: string;
   title: string;
-  description: string;
-  assignee: string;
-  assignee_notion_user_id: string;
-  assignee_email: string;
-  due_date: string;
-  task_type: string;
   meeting_title: string;
   /** Groups tasks by meeting: two meetings can share a title ("Daily"). */
   meeting_key: string;
 }
-
-type EditableField =
-  | "description"
-  | "assignee"
-  | "due_date"
-  | "task_type";
-
-// Select values that aren't Notion user ids.
-const NO_ASSIGNEE = "";
-const UNLINKED_ASSIGNEE = "__unlinked__";
 
 /** Integrations that can't receive approved tasks from here. */
 const NON_TARGET_PROVIDERS = ["read-ai", "monday", "fireflies"];
@@ -53,13 +46,12 @@ const TARGET_LABELS: Record<string, string> = {
   "outlook-calendar": "Outlook",
 };
 
-const fieldLabel =
-  "text-[10px] font-medium text-mid-gray uppercase tracking-wide";
-const fieldInput =
-  "w-full px-2.5 py-1.5 text-sm rounded-md border bg-background focus:outline-none";
-
 /**
  * Review step before approving tasks.
+ *
+ * Tasks can already be edited on the tasks page; this window starts from those
+ * values (saved, or still being edited there) so only last-minute changes are
+ * left to make here.
  *
  * Layout, top to bottom:
  *  1. Where the tasks go (Notion / calendars). Checking Notion reveals the one
@@ -68,22 +60,22 @@ const fieldInput =
  *     Every task goes to the board picked here: never to a suggested one.
  *  3. Warnings and the approve button.
  */
-/** A stored date as the date input's value ("YYYY-MM-DD"); "" when there is none. */
-function toInputDate(value: string | null | undefined): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
-  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
-}
-
 export function ApprovalReviewModal({
   items,
+  drafts,
   integrations,
   config,
+  onExclude,
   onConfirm,
   onClose,
 }: {
   items: CloudActionItem[];
+  /** Edits made on the tasks page and not saved yet, by task id. */
+  drafts?: Record<string, TaskDraft>;
   integrations: IntegrationInfo[];
   config: PreloadedConfig;
+  /** Leave a task out of this approval (it stays pending on the page). */
+  onExclude?: (id: string) => void;
   onConfirm: (
     edits: Record<string, ItemEdits>,
     integrationSettings: Record<string, string>,
@@ -92,31 +84,21 @@ export function ApprovalReviewModal({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [editableItems, setEditableItems] = useState<EditableItem[]>(() =>
-    items.map((i) => {
-      const linked =
-        config.notionPeople.find((p) => p.id === i.assignee_notion_user_id) ??
-        (i.assignee
-          ? findNotionPerson(i.assignee, config.notionPeople)
-          : undefined);
-      return {
-        id: i.id,
-        title: i.title ?? "",
-        description: i.description ?? "",
-        assignee: linked?.name ?? i.assignee ?? "",
-        assignee_notion_user_id: linked?.id ?? "",
-        assignee_email: linked?.email ?? "",
-        due_date: toInputDate(i.due_date),
-        task_type:
-          i.task_type === TASK_TYPE_PREVIOUS
-            ? TASK_TYPE_PREVIOUS
-            : TASK_TYPE_PENDING,
-        meeting_title:
-          i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
-        meeting_key: i.meeting_id ?? i.meeting_name ?? i.meeting_title ?? "",
-      };
-    }),
+  const [allEditableItems, setEditableItems] = useState<EditableItem[]>(() =>
+    items.map((i) => ({
+      ...(drafts?.[i.id] ?? makeDraft(i, config.notionPeople)),
+      id: i.id,
+      title: i.title ?? "",
+      meeting_title:
+        i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
+      meeting_key: i.meeting_id ?? i.meeting_name ?? i.meeting_title ?? "",
+    })),
   );
+  // Tasks left out of the approval disappear from this window.
+  const editableItems = useMemo(() => {
+    const ids = new Set(items.map((i) => i.id));
+    return allEditableItems.filter((e) => ids.has(e.id));
+  }, [allEditableItems, items]);
   const [submitting, setSubmitting] = useState(false);
 
   // ── Destinations ──
@@ -155,33 +137,10 @@ export function ApprovalReviewModal({
       return n;
     });
 
-  // ── Per-task boards ──
-
   // ── Item edits ──
-  const updateItem = <K extends EditableField>(
-    id: string,
-    field: K,
-    value: EditableItem[K],
-  ) => {
+  const updateItem = (id: string, patch: Partial<TaskDraft>) => {
     setEditableItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
-    );
-  };
-
-  const selectAssignee = (id: string, value: string) => {
-    if (value === UNLINKED_ASSIGNEE) return;
-    const person = config.notionPeople.find((p) => p.id === value);
-    setEditableItems((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              assignee: person?.name ?? "",
-              assignee_notion_user_id: person?.id ?? "",
-              assignee_email: person?.email ?? "",
-            }
-          : item,
-      ),
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
     );
   };
 
@@ -199,7 +158,15 @@ export function ApprovalReviewModal({
   // Only block when the board list is loaded; otherwise the backend default applies.
   // Notion needs a board picked by the user: no board, no approval.
   const itemsMissingBoard = sendsToNotion && !notionDbId ? editableItems.length : 0;
-  const canConfirm = !submitting && targets.size > 0 && itemsMissingBoard === 0;
+  const itemsInvalid = editableItems.filter(
+    (i) => draftProblem(i, i) !== null,
+  ).length;
+  const canConfirm =
+    !submitting &&
+    editableItems.length > 0 &&
+    targets.size > 0 &&
+    itemsMissingBoard === 0 &&
+    itemsInvalid === 0;
 
   const handleConfirm = () => {
     setSubmitting(true);
@@ -207,23 +174,7 @@ export function ApprovalReviewModal({
     for (const edited of editableItems) {
       const original = items.find((i) => i.id === edited.id);
       if (!original) continue;
-      const changed: ItemEdits = {};
-      if (edited.description !== (original.description ?? "")) {
-        changed.description = edited.description;
-      }
-      if (
-        edited.assignee_notion_user_id !==
-        (original.assignee_notion_user_id ?? "")
-      ) {
-        // Send the Notion user itself, not just its name, so the card gets the owner.
-        changed.assignee = edited.assignee;
-        changed.assignee_notion_user_id = edited.assignee_notion_user_id;
-        changed.assignee_email = edited.assignee_email;
-      } else if (edited.assignee !== (original.assignee ?? "")) {
-        changed.assignee = edited.assignee;
-      }
-      if (edited.due_date !== toInputDate(original.due_date))
-        changed.due_date = edited.due_date;
+      const changed: ItemEdits = draftEdits(edited, original);
       // Always sent, so the backend knows whether the card is still to do.
       changed.task_type = edited.task_type;
       if (
@@ -270,7 +221,7 @@ export function ApprovalReviewModal({
         <div className="px-6 pt-5 pb-3 border-b border-mid-gray/20">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-semibold">
-              {t("actionItems.review.title", { count: items.length })}
+              {t("actionItems.review.title", { count: editableItems.length })}
             </h3>
             <button
               onClick={onClose}
@@ -443,7 +394,11 @@ export function ApprovalReviewModal({
                             item={item}
                             config={config}
                             onChange={updateItem}
-                            onSelectAssignee={selectAssignee}
+                            onExclude={
+                              onExclude && editableItems.length > 1
+                                ? onExclude
+                                : undefined
+                            }
                           />
                         ))}
                       </div>
@@ -457,6 +412,12 @@ export function ApprovalReviewModal({
 
         {/* 3. Warnings + actions */}
         <div className="px-6 py-4 border-t border-mid-gray/20 flex flex-col gap-3">
+          {itemsInvalid > 0 && (
+            <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {t("actionItems.review.invalidItems", { count: itemsInvalid })}
+            </p>
+          )}
           {itemsMissingBoard > 0 && (
             <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -498,7 +459,7 @@ export function ApprovalReviewModal({
               )}
               {submitting
                 ? t("actionItems.review.confirming")
-                : t("actionItems.review.confirm", { count: items.length })}
+                : t("actionItems.review.confirm", { count: editableItems.length })}
             </button>
           </div>
         </div>
@@ -507,25 +468,22 @@ export function ApprovalReviewModal({
   );
 }
 
+
 // ─── One task in the review list ─────────────────────────────────
 
 function TaskCard({
   item,
   config,
   onChange,
-  onSelectAssignee,
+  onExclude,
 }: {
   item: EditableItem;
   config: PreloadedConfig;
-  onChange: <K extends EditableField>(
-    id: string,
-    field: K,
-    value: EditableItem[K],
-  ) => void;
-  onSelectAssignee: (id: string, value: string) => void;
+  onChange: (id: string, patch: Partial<TaskDraft>) => void;
+  onExclude?: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const unlinkedOwner = !!item.assignee && !item.assignee_notion_user_id;
+  const problem = draftProblem(item, item);
 
   return (
     <div className="rounded-lg border border-mid-gray/15 p-3 flex flex-col gap-2.5">
@@ -536,134 +494,33 @@ function TaskCard({
         </p>
         <TaskTypeSwitch
           value={item.task_type}
-          onChange={(value) => onChange(item.id, "task_type", value)}
+          onChange={(value) => onChange(item.id, { task_type: value })}
         />
-      </div>
-
-      <textarea
-        value={item.description}
-        onChange={(e) => onChange(item.id, "description", e.target.value)}
-        rows={2}
-        aria-label={t("actionItems.review.description")}
-        className="w-full px-2.5 py-1.5 text-xs text-mid-gray rounded-md border border-mid-gray/15 bg-transparent resize-none focus:outline-none focus:border-lezat-sage/50 focus:text-text"
-        placeholder={t("actionItems.review.noDescription")}
-      />
-
-      <div className="flex flex-wrap gap-3">
-        {/* Owner */}
-        <label className="flex-[2] min-w-[180px] flex flex-col gap-1">
-          <span className={fieldLabel}>{t("actionItems.review.assignee")}</span>
-          {config.notionPeople.length > 0 ? (
-            <>
-              <select
-                value={
-                  item.assignee_notion_user_id ||
-                  (item.assignee ? UNLINKED_ASSIGNEE : NO_ASSIGNEE)
-                }
-                onChange={(e) => onSelectAssignee(item.id, e.target.value)}
-                className={`${fieldInput} ${
-                  unlinkedOwner
-                    ? "border-amber-500/50 focus:border-amber-500"
-                    : "border-mid-gray/15 focus:border-lezat-sage/50"
-                }`}
-              >
-                <option value={NO_ASSIGNEE}>
-                  {t("actionItems.review.noAssignee")}
-                </option>
-                {unlinkedOwner && (
-                  <option value={UNLINKED_ASSIGNEE}>
-                    {t("actionItems.review.notInNotion", {
-                      name: item.assignee,
-                    })}
-                  </option>
-                )}
-                {config.notionPeople.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.name}
-                  </option>
-                ))}
-              </select>
-              {unlinkedOwner && (
-                <span className="text-[10px] text-amber-500">
-                  {t("actionItems.review.notInNotionHint")}
-                </span>
-              )}
-            </>
-          ) : (
-            <input
-              type="text"
-              value={item.assignee}
-              onChange={(e) => onChange(item.id, "assignee", e.target.value)}
-              className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
-            />
-          )}
-        </label>
-
-        {/* Due date (optional); a task already done has none, it goes to the timesheet */}
-        {item.task_type === TASK_TYPE_PREVIOUS ? (
-          <p className="flex-1 min-w-[140px] self-end pb-1.5 text-[11px] text-blue-500">
-            {t("actionItems.review.doneForTimesheet")}
-          </p>
-        ) : (
-          <label className="flex-1 min-w-[140px] flex flex-col gap-1">
-            <span className={fieldLabel}>
-              {t("actionItems.review.dueDateOptional")}
-            </span>
-            <input
-              type="date"
-              lang="es"
-              value={item.due_date}
-              onChange={(e) => onChange(item.id, "due_date", e.target.value)}
-              className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
-            />
-          </label>
+        {onExclude && (
+          <button
+            type="button"
+            onClick={() => onExclude(item.id)}
+            className="shrink-0 p-0.5 rounded text-mid-gray hover:text-red-500 hover:bg-red-500/10 transition-colors"
+            title={t("actionItems.review.exclude")}
+            aria-label={t("actionItems.review.exclude")}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         )}
       </div>
 
-    </div>
-  );
-}
+      <TaskFields
+        draft={item}
+        people={config.notionPeople}
+        onChange={(patch) => onChange(item.id, patch)}
+      />
 
-/** Two-option switch: still to do vs. already done before the meeting. */
-function TaskTypeSwitch({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const { t } = useTranslation();
-  const options = [
-    { value: TASK_TYPE_PENDING, label: t("actionItems.review.typePending") },
-    { value: TASK_TYPE_PREVIOUS, label: t("actionItems.previousTask") },
-  ];
-  return (
-    <div
-      role="radiogroup"
-      title={t("actionItems.review.typeHint")}
-      className="shrink-0 flex rounded-full border border-mid-gray/20 p-0.5 text-[10px] font-medium"
-    >
-      {options.map((opt) => {
-        const active = value === opt.value;
-        const activeClass =
-          opt.value === TASK_TYPE_PREVIOUS
-            ? "bg-blue-500/15 text-blue-500"
-            : "bg-lezat-sage/20 text-text";
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange(opt.value)}
-            className={`px-2 py-0.5 rounded-full transition-colors ${
-              active ? activeClass : "text-mid-gray hover:text-text"
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
+      {problem && (
+        <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          {t(problem)}
+        </p>
+      )}
     </div>
   );
 }

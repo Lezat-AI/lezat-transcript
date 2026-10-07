@@ -13,9 +13,6 @@ export interface CloudActionItem {
   meeting_name?: string | null;
   /** Project the task belongs to (PeopleZat, MediaZat…), when the backend knows it. */
   project?: string | null;
-  notion_database_id?: string | null;
-  notion_database_title?: string | null;
-  notion_database_reason?: string | null;
   due_date: string | null;
   /** "pending" | "completed_previous" (work that was already done before the meeting). */
   task_type: string;

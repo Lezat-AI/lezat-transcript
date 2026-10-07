@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { check } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -13,6 +13,41 @@ interface UpdateCheckerProps {
   className?: string;
 }
 
+/// Re-check for updates while the app stays open (it lives in the tray for
+/// days), so a mandatory release reaches people who never restart it.
+const PERIODIC_CHECK_MS = 4 * 60 * 60 * 1000;
+/// While a meeting is recording, a mandatory install waits and retries.
+const MEETING_RETRY_MS = 30 * 1000;
+
+/// Numeric compare of "x.y.z" versions (pre-release suffixes ignored).
+function compareVersions(a: string, b: string): number {
+  const parts = (v: string) =>
+    v
+      .replace(/^v/, "")
+      .split("-")[0]
+      .split(".")
+      .map((n) => parseInt(n, 10) || 0);
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/// latest.json may carry `min_version` (oldest version still allowed) or
+/// `mandatory: true`. Either makes the update install without asking.
+function isMandatoryUpdate(update: Update): boolean {
+  const raw = update.rawJson ?? {};
+  if (raw.mandatory === true) return true;
+  const minVersion = raw.min_version;
+  return (
+    typeof minVersion === "string" &&
+    compareVersions(update.currentVersion, minVersion) < 0
+  );
+}
+
 const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const { t } = useTranslation();
   // Update checking state
@@ -23,6 +58,13 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
     useState(false);
+  // Version of a mandatory update being forced, if any.
+  const [mandatoryVersion, setMandatoryVersion] = useState<string | null>(null);
+  const [waitingForMeeting, setWaitingForMeeting] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const mandatoryRetryRef = useRef<ReturnType<typeof setTimeout>>();
+  // Ref, not state: periodic checks and retries run from stale closures.
+  const installingRef = useRef(false);
 
   const { settings, isLoading } = useSettings();
   const settingsLoaded = !isLoading && settings !== null;
@@ -48,6 +90,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     }
 
     checkForUpdates();
+    const periodic = setInterval(() => checkForUpdates(), PERIODIC_CHECK_MS);
 
     // Listen for update check events
     const updateUnlisten = listen("check-for-updates", () => {
@@ -58,6 +101,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       if (upToDateTimeoutRef.current) {
         clearTimeout(upToDateTimeoutRef.current);
       }
+      if (mandatoryRetryRef.current) {
+        clearTimeout(mandatoryRetryRef.current);
+      }
+      clearInterval(periodic);
       updateUnlisten.then((fn) => fn());
     };
   }, [settingsLoaded, updateChecksEnabled]);
@@ -73,6 +120,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       if (update) {
         setUpdateAvailable(true);
         setShowUpToDate(false);
+        if (isMandatoryUpdate(update)) {
+          setMandatoryVersion(update.version);
+          void installMandatoryUpdate();
+        }
       } else {
         setUpdateAvailable(false);
 
@@ -100,8 +151,35 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     checkForUpdates();
   };
 
+  /// Install a mandatory update right away, unless a meeting is being
+  /// recorded: relaunching would cut it, so wait for it to end.
+  const installMandatoryUpdate = async () => {
+    if (mandatoryRetryRef.current) {
+      clearTimeout(mandatoryRetryRef.current);
+      mandatoryRetryRef.current = undefined;
+    }
+    let meetingActive = false;
+    try {
+      meetingActive = (await commands.meetingActive()) != null;
+    } catch {
+      meetingActive = false;
+    }
+    if (meetingActive) {
+      setWaitingForMeeting(true);
+      mandatoryRetryRef.current = setTimeout(
+        () => void installMandatoryUpdate(),
+        MEETING_RETRY_MS,
+      );
+      return;
+    }
+    setWaitingForMeeting(false);
+    await installUpdate();
+  };
+
   const installUpdate = async () => {
-    if (!updateChecksEnabled || isInstalling) return;
+    if (!updateChecksEnabled || installingRef.current) return;
+    installingRef.current = true;
+    setInstallError(null);
 
     // Flip the busy flag *synchronously* before any `await` so rapid
     // clicks during the portable/check roundtrip can't re-enter this
@@ -116,6 +194,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       if (portable) {
         setShowPortableUpdateDialog(true);
         setIsInstalling(false);
+        installingRef.current = false;
         return;
       }
 
@@ -151,7 +230,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       await relaunch();
     } catch (error) {
       console.error("Failed to install update:", error);
+      setInstallError(String(error));
     } finally {
+      installingRef.current = false;
       setIsInstalling(false);
       setDownloadProgress(0);
       downloadedBytesRef.current = 0;
@@ -197,6 +278,56 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
 
   return (
     <>
+      {mandatoryVersion && waitingForMeeting && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-amber-500/40 bg-bg shadow-lg p-3 text-sm space-y-1">
+          <p className="font-semibold">{t("footer.mandatoryUpdateTitle")}</p>
+          <p className="text-amber-500">
+            {t("footer.mandatoryUpdateWaitingMeeting")}
+          </p>
+        </div>
+      )}
+      {mandatoryVersion && !waitingForMeeting && !showPortableUpdateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-bg border border-border rounded-lg p-6 max-w-md w-full mx-4 space-y-4">
+            <h2 className="text-base font-semibold">
+              {t("footer.mandatoryUpdateTitle")}
+            </h2>
+            <p className="text-sm text-text/70">
+              {t("footer.mandatoryUpdateMessage", {
+                version: mandatoryVersion,
+              })}
+            </p>
+            {isInstalling && (
+              <div className="space-y-1">
+                <p className="text-xs text-text/60 tabular-nums">
+                  {getUpdateStatusText()}
+                </p>
+                <ProgressBar
+                  progress={[
+                    { id: "mandatory-update", percentage: downloadProgress },
+                  ]}
+                  size="large"
+                />
+              </div>
+            )}
+            {installError && !isInstalling && (
+              <div className="space-y-2">
+                <p className="text-sm text-red-500 break-words">
+                  {t("footer.mandatoryUpdateFailed", { error: installError })}
+                </p>
+                <div className="flex justify-end">
+                  <button
+                    className="px-3 py-1.5 text-sm rounded bg-logo-primary text-background hover:bg-logo-primary/80 transition-colors"
+                    onClick={() => void installMandatoryUpdate()}
+                  >
+                    {t("footer.mandatoryUpdateRetry")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {showPortableUpdateDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-bg border border-border rounded-lg p-6 max-w-md w-full mx-4 space-y-4">

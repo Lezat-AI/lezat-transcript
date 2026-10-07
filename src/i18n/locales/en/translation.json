@@ -627,7 +627,12 @@
     "checkForUpdates": "Check for updates",
     "portableUpdateTitle": "Manual update required",
     "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
-    "portableUpdateButton": "Open GitHub Releases"
+    "portableUpdateButton": "Open GitHub Releases",
+    "mandatoryUpdateTitle": "Update required",
+    "mandatoryUpdateMessage": "Version {{version}} is required to keep transcribing correctly. It is installing now and the app will restart.",
+    "mandatoryUpdateWaitingMeeting": "It will install as soon as the current meeting ends.",
+    "mandatoryUpdateFailed": "The update could not be installed: {{error}}",
+    "mandatoryUpdateRetry": "Retry"
   },
   "common": {
     "loading": "Loading...",
@@ -747,7 +752,10 @@
       "sectionTodo_other": "To do · {{count}}",
       "sectionDone_one": "Already done (go to Done) · 1",
       "sectionDone_other": "Already done (go to Done) · {{count}}",
-      "doneForTimesheet": "Already done: it won't go to the calendar. You can log it in the timesheet."
+      "doneForTimesheet": "Already done: it won't go to the calendar. You can log it in the timesheet.",
+      "exclude": "Leave out of this approval",
+      "invalidItems_one": "1 task needs fixing before approving.",
+      "invalidItems_other": "{{count}} tasks need fixing before approving."
     },
     "previousTask": "Done",
     "loadMore": "Show more meetings ({{remaining}} remaining)",
@@ -767,6 +775,20 @@
       "moveHint": "Move the selected tasks to a project",
       "saveFailed_one": "Couldn't save the project of 1 task. Try again.",
       "saveFailed_other": "Couldn't save the project of {{count}} tasks. Try again."
+    },
+    "edit": {
+      "start": "Edit task",
+      "heading": "Edit task",
+      "save": "Save",
+      "saving": "Saving…",
+      "discard": "Discard changes",
+      "close": "Close",
+      "unsaved": "Unsaved changes",
+      "saveFailed": "Couldn't save the changes. {{detail}}",
+      "descriptionRequired": "Write a description: this task has no title.",
+      "invalidDate": "The date isn't valid.",
+      "unsavedInApproval_one": "1 selected task has unsaved changes: they will be used when you approve.",
+      "unsavedInApproval_other": "{{count}} selected tasks have unsaved changes: they will be used when you approve."
     }
   },
   "integrations": {
@@ -848,5 +870,19 @@
   "meetingTranscript": {
     "echoHidden_one": "1 mic fragment that repeated the call audio (speaker echo) was hidden or shortened. Use headphones to avoid it.",
     "echoHidden_other": "{{count}} mic fragments that repeated the call audio (speaker echo) were hidden or shortened. Use headphones to avoid it."
+  },
+  "meetingContext": {
+    "headphonesWarning": "Use headphones for a better transcription",
+    "headphonesWarningDetail": "Your speakers ({{device}}) let your microphone pick up the other side of the call, which duplicates what they say.",
+    "detectedMeeting": "Calendar meeting: {{title}}",
+    "untitledEvent": "Untitled event",
+    "noCalendarMeeting": "No calendar meeting detected. You can add the participants by hand.",
+    "participants": "Participants",
+    "participantsHint": "They help assign each task to the right person.",
+    "noParticipants": "No participants yet",
+    "addPlaceholder": "Name or email",
+    "add": "Add",
+    "remove": "Remove {{name}}",
+    "saveFailed": "Could not save the participants"
   }
 }

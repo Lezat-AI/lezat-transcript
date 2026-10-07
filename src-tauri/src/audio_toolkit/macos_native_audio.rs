@@ -155,6 +155,15 @@ impl MacosNativeAudioRecorder {
         Ok(std::mem::take(&mut inner.buffer))
     }
 
+    /// Take the samples accumulated so far and keep recording.
+    pub fn drain(&self) -> Result<Vec<f32>> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("sysaudio inner mutex poisoned"))?;
+        Ok(std::mem::take(&mut inner.buffer))
+    }
+
     pub fn close(&mut self) -> Result<()> {
         self.poll_stop_flag.store(true, Ordering::SeqCst);
         if let Some(h) = self.poll_thread.take() {

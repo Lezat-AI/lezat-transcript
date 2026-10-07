@@ -9,6 +9,7 @@ import { commands } from "@/bindings";
 import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
 import { AudioPlayer } from "../ui/AudioPlayer";
+import { HeadphonesNotice, MeetingContextPanel } from "./MeetingContextPanel";
 import {
   MeetingTranscriptView,
   formatDialogAsText,
@@ -137,6 +138,7 @@ export function MeetingsPage() {
   const { settings, updateSetting } = useSettings();
   const captureSystemAudio = settings?.capture_system_audio ?? false;
   const saveMeetingAudio = settings?.save_meeting_audio ?? false;
+  const cloudSyncEnabled = settings?.cloud_sync_enabled ?? false;
 
   const [activeId, setActiveId] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -480,12 +482,18 @@ export function MeetingsPage() {
           </label>
         </div>
 
+        <HeadphonesNotice enabled={captureSystemAudio} />
+
         {error && (
           <div className="text-sm text-red-500 border border-red-500/30 bg-red-500/5 rounded p-2">
             {error}
           </div>
         )}
       </section>
+
+      {activeId !== null && cloudSyncEnabled && (
+        <MeetingContextPanel meetingId={activeId} />
+      )}
 
       {/* Cloud sync status for last completed meeting */}
       {Object.entries(syncStatus).length > 0 && (

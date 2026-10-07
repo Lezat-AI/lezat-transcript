@@ -627,7 +627,12 @@
     "checkForUpdates": "Buscar actualizaciones",
     "portableUpdateTitle": "Se requiere actualización manual",
     "portableUpdateMessage": "Las instalaciones portables no se pueden actualizar automáticamente. Para actualizar: descarga el último instalador NSIS desde GitHub Releases, instálalo en la misma carpeta y luego copia tu carpeta Data/ (configuración, modelos, grabaciones) de la versión anterior a la nueva.",
-    "portableUpdateButton": "Abrir GitHub Releases"
+    "portableUpdateButton": "Abrir GitHub Releases",
+    "mandatoryUpdateTitle": "Actualización obligatoria",
+    "mandatoryUpdateMessage": "Se requiere la versión {{version}} para seguir transcribiendo correctamente. Se está instalando y la app se reiniciará.",
+    "mandatoryUpdateWaitingMeeting": "Se instalará apenas termine la reunión en curso.",
+    "mandatoryUpdateFailed": "No se pudo instalar la actualización: {{error}}",
+    "mandatoryUpdateRetry": "Reintentar"
   },
   "common": {
     "loading": "Cargando...",
@@ -747,7 +752,10 @@
       "sectionTodo_other": "Por hacer · {{count}}",
       "sectionDone_one": "Ya hechas (van a Done) · 1",
       "sectionDone_other": "Ya hechas (van a Done) · {{count}}",
-      "doneForTimesheet": "Ya está hecha: no va al calendario. Puedes registrarla en el Registro de horas."
+      "doneForTimesheet": "Ya está hecha: no va al calendario. Puedes registrarla en el Registro de horas.",
+      "exclude": "Quitar de esta aprobación",
+      "invalidItems_one": "1 tarea necesita corrección antes de aprobar.",
+      "invalidItems_other": "{{count}} tareas necesitan corrección antes de aprobar."
     },
     "previousTask": "Ya hecha",
     "loadMore": "Mostrar más reuniones ({{remaining}} restantes)",
@@ -767,6 +775,20 @@
       "moveHint": "Mueve las tareas seleccionadas a un proyecto",
       "saveFailed_one": "No se pudo guardar el proyecto de 1 tarea. Inténtalo de nuevo.",
       "saveFailed_other": "No se pudo guardar el proyecto de {{count}} tareas. Inténtalo de nuevo."
+    },
+    "edit": {
+      "start": "Editar tarea",
+      "heading": "Editar tarea",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "discard": "Descartar cambios",
+      "close": "Cerrar",
+      "unsaved": "Cambios sin guardar",
+      "saveFailed": "No se pudieron guardar los cambios. {{detail}}",
+      "descriptionRequired": "Escribe una descripción: esta tarea no tiene título.",
+      "invalidDate": "La fecha no es válida.",
+      "unsavedInApproval_one": "1 tarea seleccionada tiene cambios sin guardar: se usarán al aprobar.",
+      "unsavedInApproval_other": "{{count}} tareas seleccionadas tienen cambios sin guardar: se usarán al aprobar."
     }
   },
   "integrations": {
@@ -848,5 +870,19 @@
   "meetingTranscript": {
     "echoHidden_one": "Se ocultó o acortó 1 fragmento del micrófono que repetía el audio de la llamada (eco de los parlantes). Usa audífonos para evitarlo.",
     "echoHidden_other": "Se ocultaron o acortaron {{count}} fragmentos del micrófono que repetían el audio de la llamada (eco de los parlantes). Usa audífonos para evitarlo."
+  },
+  "meetingContext": {
+    "headphonesWarning": "Usa audífonos para una mejor transcripción",
+    "headphonesWarningDetail": "Con parlantes ({{device}}) tu micrófono capta también al otro lado de la llamada y lo que dicen queda duplicado.",
+    "detectedMeeting": "Reunión del calendario: {{title}}",
+    "untitledEvent": "Evento sin título",
+    "noCalendarMeeting": "No se detectó una reunión en el calendario. Puedes agregar los participantes manualmente.",
+    "participants": "Participantes",
+    "participantsHint": "Ayudan a asignar cada tarea a la persona correcta.",
+    "noParticipants": "Aún no hay participantes",
+    "addPlaceholder": "Nombre o correo",
+    "add": "Agregar",
+    "remove": "Quitar a {{name}}",
+    "saveFailed": "No se pudieron guardar los participantes"
   }
 }
