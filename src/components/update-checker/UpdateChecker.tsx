@@ -16,7 +16,8 @@ interface UpdateCheckerProps {
 /// Re-check for updates while the app stays open (it lives in the tray for
 /// days), so a mandatory release reaches people who never restart it.
 const PERIODIC_CHECK_MS = 4 * 60 * 60 * 1000;
-/// While a meeting is recording, a mandatory install waits and retries.
+/// While a meeting is recording or still uploading, a mandatory install
+/// waits and retries.
 const MEETING_RETRY_MS = 30 * 1000;
 
 /// Numeric compare of "x.y.z" versions (pre-release suffixes ignored).
@@ -62,6 +63,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const [mandatoryVersion, setMandatoryVersion] = useState<string | null>(null);
   const [waitingForMeeting, setWaitingForMeeting] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  // The mandatory overlay can be closed when installing can't proceed here
+  // (update not found on retry, portable install), so it never traps the
+  // user without a way out.
+  const [canDismissMandatory, setCanDismissMandatory] = useState(false);
   const mandatoryRetryRef = useRef<ReturnType<typeof setTimeout>>();
   // Ref, not state: periodic checks and retries run from stale closures.
   const installingRef = useRef(false);
@@ -152,19 +157,20 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   };
 
   /// Install a mandatory update right away, unless a meeting is being
-  /// recorded: relaunching would cut it, so wait for it to end.
+  /// recorded or a stopped one is still finalizing/uploading in the
+  /// background: relaunching would lose it, so wait for it to finish.
   const installMandatoryUpdate = async () => {
     if (mandatoryRetryRef.current) {
       clearTimeout(mandatoryRetryRef.current);
       mandatoryRetryRef.current = undefined;
     }
-    let meetingActive = false;
+    let meetingBusy = false;
     try {
-      meetingActive = (await commands.meetingActive()) != null;
+      meetingBusy = await commands.meetingBusy();
     } catch {
-      meetingActive = false;
+      meetingBusy = false;
     }
-    if (meetingActive) {
+    if (meetingBusy) {
       setWaitingForMeeting(true);
       mandatoryRetryRef.current = setTimeout(
         () => void installMandatoryUpdate(),
@@ -180,6 +186,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     if (!updateChecksEnabled || installingRef.current) return;
     installingRef.current = true;
     setInstallError(null);
+    setCanDismissMandatory(false);
 
     // Flip the busy flag *synchronously* before any `await` so rapid
     // clicks during the portable/check roundtrip can't re-enter this
@@ -193,6 +200,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       const portable = await commands.isPortable();
       if (portable) {
         setShowPortableUpdateDialog(true);
+        // Once the dialog is closed the mandatory overlay explains why it
+        // can't install and can be dismissed.
+        setInstallError(t("footer.mandatoryUpdatePortable"));
+        setCanDismissMandatory(true);
         setIsInstalling(false);
         installingRef.current = false;
         return;
@@ -202,6 +213,8 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
 
       if (!update) {
         console.log("No update available during install attempt");
+        setInstallError(t("footer.mandatoryUpdateNotFound"));
+        setCanDismissMandatory(true);
         return;
       }
 
@@ -313,9 +326,26 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
             {installError && !isInstalling && (
               <div className="space-y-2">
                 <p className="text-sm text-red-500 break-words">
-                  {t("footer.mandatoryUpdateFailed", { error: installError })}
+                  {canDismissMandatory
+                    ? installError
+                    : t("footer.mandatoryUpdateFailed", {
+                        error: installError,
+                      })}
                 </p>
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-2">
+                  {canDismissMandatory && (
+                    <button
+                      className="px-3 py-1.5 text-sm rounded border border-border hover:bg-border/50 transition-colors"
+                      onClick={() => {
+                        // The next periodic check brings it back.
+                        setMandatoryVersion(null);
+                        setInstallError(null);
+                        setCanDismissMandatory(false);
+                      }}
+                    >
+                      {t("footer.mandatoryUpdateDismiss")}
+                    </button>
+                  )}
                   <button
                     className="px-3 py-1.5 text-sm rounded bg-logo-primary text-background hover:bg-logo-primary/80 transition-colors"
                     onClick={() => void installMandatoryUpdate()}

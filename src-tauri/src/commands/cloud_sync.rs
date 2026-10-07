@@ -7,9 +7,12 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_specta::Event;
 
 use crate::cloud_sync;
-use crate::managers::meeting::MeetingManager;
+use crate::managers::meeting::{run_upload, MeetingManager, UploadKind};
 use crate::settings;
 
+/// Upload a meeting again ("Sync to cloud"). The backend re-extracts its
+/// tasks. Sends the diagnostics stored with the recording; the outcome is
+/// reported through `CloudSyncEvent`.
 #[tauri::command]
 #[specta::specta]
 pub fn cloud_sync_meeting(app: AppHandle, meeting_id: i64) -> Result<(), String> {
@@ -17,43 +20,24 @@ pub fn cloud_sync_meeting(app: AppHandle, meeting_id: i64) -> Result<(), String>
         .try_state::<Arc<MeetingManager>>()
         .ok_or_else(|| "MeetingManager not initialized".to_string())?;
 
-    let record = mgr
-        .store()
+    let store = mgr.store();
+    store
         .get(meeting_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Meeting {meeting_id} not found"))?;
 
-    let s = settings::get_settings(&app);
+    let tracker = mgr.sync_tracker();
+    let claim = tracker
+        .claim(meeting_id)
+        .ok_or_else(|| format!("Meeting {meeting_id} is already being uploaded"))?;
+    let busy = tracker.busy_guard();
 
     // Run in a background thread to avoid blocking the UI.
     std::thread::spawn(move || {
-        let _ = (cloud_sync::CloudSyncEvent::Syncing { meeting_id }).emit(&app);
-
-        // Manual sync always forces re-processing so updated prompts take effect.
-        match cloud_sync::sync_meeting_to_cloud_force(&s, &record) {
-            Ok(resp) => {
-                // Auto-rename meeting if the backend suggested a title.
-                if let Some(ref title) = resp.suggested_title {
-                    if let Some(mgr) = app.try_state::<Arc<MeetingManager>>() {
-                        if let Err(e) = mgr.store().rename(meeting_id, title) {
-                            log::warn!("Failed to apply suggested title: {e}");
-                        }
-                    }
-                }
-
-                let _ = (cloud_sync::CloudSyncEvent::Success {
-                    meeting_id,
-                    remote_id: resp.stored_record_id,
-                })
-                .emit(&app);
-            }
-            Err(e) => {
-                let _ = (cloud_sync::CloudSyncEvent::Failed {
-                    meeting_id,
-                    error: e.to_string(),
-                })
-                .emit(&app);
-            }
+        let _claim = claim;
+        let _busy = busy;
+        if let Err(e) = run_upload(&app, &store, meeting_id, UploadKind::Manual) {
+            log::warn!("Manual sync of meeting {meeting_id} failed: {e}");
         }
     });
 

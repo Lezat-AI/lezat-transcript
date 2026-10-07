@@ -7,8 +7,8 @@
 ///
 /// Conservative by design, so the user's own speech survives when both talk:
 /// - only mic text is ever removed, and only where it repeats a run of at
-///   least `MIN_ECHO_RUN` words of a system chunk captured around the same
-///   time (the chunk before, at, or after), at about the same moment;
+///   least `MIN_ECHO_RUN` words of a system chunk whose audio overlaps the mic
+///   chunk's (± `ALIGN_MS`), at about the same moment;
 /// - words the system audio never said stay, e.g. the user answering while
 ///   the other person speaks;
 /// - a whole mic chunk is dropped only when nothing but echo is left.
@@ -27,19 +27,24 @@ export type SourcedChunk = {
   offset_ms: number;
   source: string;
   text: string;
+  /// Audio length of the chunk; missing on older recordings.
+  duration_ms?: number | null;
 };
 
-/// Chunk length used by the recorder (MeetingManager's CHUNK_SECONDS).
-const CHUNK_MS = 12_000;
-/// System chunks this close (start to start) are compared: previous, same
-/// and next chunk. Echo arrives within milliseconds, but the two sources
-/// roll their chunks independently, so a phrase can straddle a boundary.
-const WINDOW_MS = CHUNK_MS + 3_000;
+/// Chunk length assumed when a chunk's length is unknown (the recorder's
+/// minimum; chunks run 12–20 s, cut at pauses).
+const DEFAULT_CHUNK_MS = 12_000;
+/// Longest chunk the recorder makes; a longer distance to the next chunk of
+/// the same source means skipped silence, not a longer chunk.
+const MAX_CHUNK_MS = 20_000;
 /// Echo arrives within milliseconds, so a repeated phrase only counts when it
 /// sits at about the same moment in both sources. A word's moment is
 /// estimated from its position in its chunk; this much slack covers uneven
 /// speech rate. Without it, the user repeating the other person a few
 /// seconds later ("sí, yo te mando la propuesta el viernes") was deleted.
+/// System chunks are compared when their audio overlaps the mic chunk's
+/// within this slack too: the two sources roll their chunks independently,
+/// so a phrase can straddle a boundary.
 const ALIGN_MS = 6_000;
 /// Words in a row that must match to count as echo (shingle size).
 const SHINGLE = 3;
@@ -104,9 +109,56 @@ function tokenize(text: string): Token[] {
   return out;
 }
 
+/// Each chunk's audio length: its `duration_ms`, else the distance to the
+/// next chunk of the same source (when plausible), else the default.
+/// Exported for tests.
+export function chunkDurations(chunks: SourcedChunk[]): number[] {
+  const bySource = new Map<string, number[]>();
+  chunks.forEach((c, i) => {
+    const list = bySource.get(c.source);
+    if (list) list.push(i);
+    else bySource.set(c.source, [i]);
+  });
+  const out = new Array<number>(chunks.length).fill(DEFAULT_CHUNK_MS);
+  for (const indices of bySource.values()) {
+    const sorted = [...indices].sort(
+      (a, b) => chunks[a].offset_ms - chunks[b].offset_ms,
+    );
+    sorted.forEach((idx, k) => {
+      const own = chunks[idx].duration_ms;
+      if (own != null && own > 0) {
+        out[idx] = own;
+        return;
+      }
+      const next = sorted
+        .slice(k + 1)
+        .find((j) => chunks[j].offset_ms > chunks[idx].offset_ms);
+      if (next === undefined) return;
+      const gap = chunks[next].offset_ms - chunks[idx].offset_ms;
+      if (gap > 0 && gap <= MAX_CHUNK_MS) out[idx] = gap;
+    });
+  }
+  return out;
+}
+
+type TimedChunk = { at: number; duration: number; words: string[] };
+
+/// Whether two chunks' audio overlaps, give or take `ALIGN_MS`.
+function overlaps(
+  at: number,
+  duration: number,
+  other: { at: number; duration: number },
+): boolean {
+  return (
+    other.at - ALIGN_MS < at + duration &&
+    at < other.at + other.duration + ALIGN_MS
+  );
+}
+
 /// Each shingle with its estimated moment (words spread over the chunk).
 function timedShingles(
   offsetMs: number,
+  durationMs: number,
   words: string[],
 ): Array<[string, number]> {
   const count = Math.max(words.length, 1);
@@ -114,7 +166,7 @@ function timedShingles(
   for (let i = 0; i + SHINGLE <= words.length; i++) {
     out.push([
       words.slice(i, i + SHINGLE).join(" "),
-      offsetMs + (CHUNK_MS * (i + SHINGLE / 2)) / count,
+      offsetMs + (durationMs * (i + SHINGLE / 2)) / count,
     ]);
   }
   return out;
@@ -137,19 +189,14 @@ function ratio(a: string, b: string): number {
 
 type TimedWord = [string, number];
 
-/// System words around a mic chunk, in order, with their estimated moment.
-function nearbySystemWords(
-  offsetMs: number,
-  system: Array<{ at: number; words: string[] }>,
-): TimedWord[] {
+/// System words of the given (overlapping) chunks, in order, with their
+/// estimated moment.
+function systemWordsOf(near: TimedChunk[]): TimedWord[] {
   const out: TimedWord[] = [];
-  const near = system
-    .filter((s) => Math.abs(s.at - offsetMs) <= WINDOW_MS)
-    .sort((a, b) => a.at - b.at);
-  for (const s of near) {
+  for (const s of [...near].sort((a, b) => a.at - b.at)) {
     const count = Math.max(s.words.length, 1);
     s.words.forEach((w, i) =>
-      out.push([w, s.at + (CHUNK_MS * (i + 0.5)) / count]),
+      out.push([w, s.at + (s.duration * (i + 0.5)) / count]),
     );
   }
   return out;
@@ -160,6 +207,7 @@ function fuzzyEchoMask(
   text: string,
   tokens: Token[],
   offsetMs: number,
+  durationMs: number,
   systemWords: TimedWord[],
 ): boolean[] {
   const n = tokens.length;
@@ -177,7 +225,7 @@ function fuzzyEchoMask(
     if (sentence.length < FUZZY_MIN_CHARS) continue;
     const moment =
       offsetMs +
-      (CHUNK_MS * ((indices[0] + indices[indices.length - 1]) / 2 + 0.5)) / n;
+      (durationMs * ((indices[0] + indices[indices.length - 1]) / 2 + 0.5)) / n;
     const size = indices.length;
     let best = 0;
     for (
@@ -239,6 +287,7 @@ function stripEcho(
   text: string,
   reference: Set<string>,
   offsetMs = 0,
+  durationMs = DEFAULT_CHUNK_MS,
   systemWords: TimedWord[] = [],
 ): string | null {
   const tokens = tokenize(text);
@@ -249,7 +298,7 @@ function stripEcho(
     tokens.map((t) => t.norm),
     reference,
   );
-  const fuzzy = fuzzyEchoMask(text, tokens, offsetMs, systemWords);
+  const fuzzy = fuzzyEchoMask(text, tokens, offsetMs, durationMs, systemWords);
   const mask = exact.map((hit, k) => hit || fuzzy[k]);
   if (!mask.some(Boolean)) return text;
   if (mask.every(Boolean)) return null;
@@ -286,12 +335,16 @@ export type EchoFilterResult<T> = {
 export function removeMicEcho<T extends SourcedChunk>(
   chunks: T[],
 ): EchoFilterResult<T> {
-  const system = chunks
-    .filter((c) => c.source === "system")
-    .map((c) => ({
+  const durations = chunkDurations(chunks);
+  const system: TimedChunk[] = [];
+  chunks.forEach((c, i) => {
+    if (c.source !== "system") return;
+    system.push({
       at: c.offset_ms,
+      duration: durations[i],
       words: tokenize(c.text).map((t) => t.norm),
-    }));
+    });
+  });
   if (system.length === 0) {
     return { chunks, removedChunks: 0, trimmedChunks: 0 };
   }
@@ -299,16 +352,18 @@ export function removeMicEcho<T extends SourcedChunk>(
   let removedChunks = 0;
   let trimmedChunks = 0;
   const out: T[] = [];
-  for (const c of chunks) {
+  chunks.forEach((c, i) => {
     if (c.source === "system") {
       out.push(c);
-      continue;
+      return;
     }
+    const duration = durations[i];
+    // System chunks whose audio overlaps this one's (± ALIGN_MS).
+    const near = system.filter((s) => overlaps(c.offset_ms, duration, s));
     // Mic shingles a nearby system chunk said at about the same moment.
     const heard = new Map<string, number[]>();
-    for (const s of system) {
-      if (Math.abs(s.at - c.offset_ms) > WINDOW_MS) continue;
-      for (const [sh, at] of timedShingles(s.at, s.words)) {
+    for (const s of near) {
+      for (const [sh, at] of timedShingles(s.at, s.duration, s.words)) {
         const times = heard.get(sh);
         if (times) times.push(at);
         else heard.set(sh, [at]);
@@ -316,7 +371,7 @@ export function removeMicEcho<T extends SourcedChunk>(
     }
     const reference = new Set<string>();
     const micWords = tokenize(c.text).map((t) => t.norm);
-    for (const [sh, at] of timedShingles(c.offset_ms, micWords)) {
+    for (const [sh, at] of timedShingles(c.offset_ms, duration, micWords)) {
       if (heard.get(sh)?.some((t) => Math.abs(t - at) <= ALIGN_MS)) {
         reference.add(sh);
       }
@@ -325,7 +380,8 @@ export function removeMicEcho<T extends SourcedChunk>(
       c.text,
       reference,
       c.offset_ms,
-      nearbySystemWords(c.offset_ms, system),
+      duration,
+      systemWordsOf(near),
     );
     if (text === null) {
       removedChunks++;
@@ -335,6 +391,6 @@ export function removeMicEcho<T extends SourcedChunk>(
     } else {
       out.push(c);
     }
-  }
+  });
   return { chunks: out, removedChunks, trimmedChunks };
 }

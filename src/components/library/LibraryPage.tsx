@@ -27,6 +27,8 @@ import {
 } from "@/bindings";
 import { useTranslation } from "react-i18next";
 import { useOsType } from "@/hooks/useOsType";
+import { useSettings } from "@/hooks/useSettings";
+import { MeetingContextPanel } from "../meetings/MeetingContextPanel";
 import { AudioPlayer } from "../ui/AudioPlayer";
 import { Button } from "../ui/Button";
 import {
@@ -128,6 +130,8 @@ async function downloadMeetingAudio(
 export function LibraryPage() {
   const osType = useOsType();
   const { t } = useTranslation();
+  const { settings } = useSettings();
+  const cloudSyncEnabled = settings?.cloud_sync_enabled ?? false;
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -457,12 +461,19 @@ export function LibraryPage() {
                     {/* Transcript area: meetings get the dialog/plain
                         toggle, dictations get plain text. */}
                     {item.kind === "meeting" ? (
-                      <MeetingTranscriptView
-                        chunks={item.chunks ?? []}
-                        transcriptText={item.transcript}
-                        mode={meetingViewMode}
-                        onModeChange={setMeetingViewMode}
-                      />
+                      <>
+                        <MeetingTranscriptView
+                          chunks={item.chunks ?? []}
+                          transcriptText={item.transcript}
+                          mode={meetingViewMode}
+                          onModeChange={setMeetingViewMode}
+                        />
+                        {/* Participants can be confirmed or fixed after
+                            the recording; they go out with the next sync. */}
+                        {cloudSyncEnabled && (
+                          <MeetingContextPanel meetingId={item.id} />
+                        )}
+                      </>
                     ) : (
                       <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
                         {isRetrying ? (

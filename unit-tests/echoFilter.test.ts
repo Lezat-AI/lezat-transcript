@@ -1,6 +1,6 @@
 // Run with: bun test unit-tests
 import { describe, expect, test } from "bun:test";
-import { removeMicEcho } from "../src/lib/echoFilter";
+import { chunkDurations, removeMicEcho } from "../src/lib/echoFilter";
 
 const mic = (offset_ms: number, text: string) => ({
   offset_ms,
@@ -120,5 +120,44 @@ describe("removeMicEcho", () => {
       ),
     ]);
     expect(r.removedChunks).toBe(1);
+  });
+});
+
+describe("variable-length chunks", () => {
+  const user = "hola equipo buenos días les cuento que ayer terminé el informe";
+  const echo =
+    "necesitamos revisar el contrato con el cliente antes del viernes";
+
+  test("uses the real chunk length to time words and pick system chunks", () => {
+    // A 20 s mic chunk whose last 8 s repeat what system audio played from
+    // 17 s on. Assuming 12 s chunks misplaced those words (and skipped the
+    // system chunk, starting 17 s after the mic one).
+    const r = removeMicEcho([
+      { ...mic(0, `${user} ${echo}`), duration_ms: 20_000 },
+      { ...sys(17_000, echo), duration_ms: 3_000 },
+    ]);
+    expect(r.trimmedChunks).toBe(1);
+    expect(r.chunks.find((c) => c.source === "mic")?.text).toBe(user);
+  });
+
+  test("ignores system chunks whose audio doesn't overlap", () => {
+    const chunks = [
+      { ...mic(0, `${user} ${echo}`), duration_ms: 12_000 },
+      { ...sys(40_000, echo), duration_ms: 12_000 },
+    ];
+    expect(removeMicEcho(chunks).chunks).toEqual(chunks);
+  });
+
+  test("chunk lengths: own, else next chunk of the source, else 12 s", () => {
+    expect(
+      chunkDurations([
+        { ...mic(0, "a"), duration_ms: 18_000 },
+        mic(18_000, "b"),
+        sys(1_000, "c"),
+        mic(33_000, "d"),
+        sys(60_000, "e"),
+        mic(90_000, "f"),
+      ]),
+    ).toEqual([18_000, 15_000, 12_000, 12_000, 12_000, 12_000]);
   });
 });

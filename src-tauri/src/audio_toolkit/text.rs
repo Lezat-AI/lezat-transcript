@@ -172,26 +172,24 @@ fn preserve_case_pattern(original: &str, replacement: &str) -> String {
 
 /// Extracts punctuation prefix and suffix from a word
 fn extract_punctuation(word: &str) -> (&str, &str) {
-    let prefix_end = word.chars().take_while(|c| !c.is_alphanumeric()).count();
+    // Byte offsets, not char counts: "¿", "¡" and "…" are multi-byte and a
+    // char count used as a byte index panics mid-character.
+    let Some(prefix_end) = word
+        .char_indices()
+        .find(|(_, c)| c.is_alphanumeric())
+        .map(|(i, _)| i)
+    else {
+        // No letters at all: the whole word is both prefix and suffix.
+        return (word, word);
+    };
     let suffix_start = word
         .char_indices()
         .rev()
-        .take_while(|(_, c)| !c.is_alphanumeric())
-        .count();
+        .find(|(_, c)| c.is_alphanumeric())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(word.len());
 
-    let prefix = if prefix_end > 0 {
-        &word[..prefix_end]
-    } else {
-        ""
-    };
-
-    let suffix = if suffix_start > 0 {
-        &word[word.len() - suffix_start..]
-    } else {
-        ""
-    };
-
-    (prefix, suffix)
+    (&word[..prefix_end], &word[suffix_start..])
 }
 
 /// Returns filler words appropriate for the given language code.
@@ -267,7 +265,12 @@ static HALLUCINATION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     ];
     patterns
         .iter()
-        .filter_map(|p| regex::RegexBuilder::new(p).case_insensitive(true).build().ok())
+        .filter_map(|p| {
+            regex::RegexBuilder::new(p)
+                .case_insensitive(true)
+                .build()
+                .ok()
+        })
         .collect()
 });
 
@@ -277,9 +280,7 @@ fn is_hallucination(text: &str) -> bool {
     if trimmed.is_empty() {
         return true;
     }
-    HALLUCINATION_PATTERNS
-        .iter()
-        .any(|re| re.is_match(trimmed))
+    HALLUCINATION_PATTERNS.iter().any(|re| re.is_match(trimmed))
 }
 
 /// Collapses repeated words (3+ repetitions) to a single instance.
@@ -407,6 +408,9 @@ mod tests {
         assert_eq!(extract_punctuation("hello"), ("", ""));
         assert_eq!(extract_punctuation("!hello?"), ("!", "?"));
         assert_eq!(extract_punctuation("...hello..."), ("...", "..."));
+        assert_eq!(extract_punctuation("¿hola?"), ("¿", "?"));
+        assert_eq!(extract_punctuation("¡sí…"), ("¡", "…"));
+        assert_eq!(extract_punctuation("..."), ("...", "..."));
     }
 
     #[test]
@@ -682,7 +686,8 @@ mod tests {
 
     #[test]
     fn test_hallucination_subtitles_by() {
-        let result = filter_transcription_output("Subtitles by the Amara.org community", "en", &None);
+        let result =
+            filter_transcription_output("Subtitles by the Amara.org community", "en", &None);
         assert_eq!(result, "");
     }
 }

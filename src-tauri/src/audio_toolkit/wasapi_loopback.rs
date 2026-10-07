@@ -12,14 +12,19 @@
 
 #![cfg(target_os = "windows")]
 
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, SendError, Sender, TryRecvError};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use log::{debug, info, warn};
 use wasapi::{get_default_device, initialize_mta, Direction, SampleType, StreamMode, WaveFormat};
 
+use crate::audio_toolkit::audio::FrameResampler;
+
 const WHISPER_SR: u32 = 16_000;
+/// How long `stop` waits for the worker before giving up.
+const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 enum Cmd {
     Start,
@@ -79,7 +84,8 @@ impl WasapiLoopbackRecorder {
     pub fn stop(&self) -> Result<Vec<f32>> {
         let (tx, rx) = mpsc::channel();
         self.send(Cmd::Stop(tx))?;
-        rx.recv().map_err(|e| anyhow!("WASAPI stop response: {e}"))
+        rx.recv_timeout(STOP_TIMEOUT)
+            .map_err(|e| anyhow!("WASAPI stop response: {e}"))
     }
 
     /// Take the samples captured so far and keep recording.
@@ -141,7 +147,11 @@ fn run_worker(cmd_rx: Receiver<Cmd>, ready_tx: mpsc::SyncSender<Result<()>>) {
         block_align,
     } = setup;
 
+    // `buffer` holds 16 kHz samples, resampled as packets arrive by one
+    // stateful resampler: resampling each drained block on its own restarted
+    // the interpolation phase every 250 ms (clicks, dropped samples).
     let mut buffer: Vec<f32> = Vec::new();
+    let mut resampler = new_resampler(sample_rate);
     let mut recording = false;
 
     loop {
@@ -150,28 +160,24 @@ fn run_worker(cmd_rx: Receiver<Cmd>, ready_tx: mpsc::SyncSender<Result<()>>) {
             match cmd_rx.try_recv() {
                 Ok(Cmd::Start) => {
                     buffer.clear();
+                    resampler = new_resampler(sample_rate);
                     recording = true;
                     debug!("WASAPI loopback: recording started");
                 }
                 Ok(Cmd::Stop(tx)) => {
                     recording = false;
-                    let out = if sample_rate == WHISPER_SR {
-                        std::mem::take(&mut buffer)
-                    } else {
-                        resample_to_16k(&buffer, sample_rate)
-                    };
-                    buffer.clear();
-                    let _ = tx.send(out);
+                    if let Some(r) = resampler.as_mut() {
+                        r.finish(|frame: &[f32]| buffer.extend_from_slice(frame));
+                    }
+                    let _ = tx.send(std::mem::take(&mut buffer));
                     debug!("WASAPI loopback: recording stopped");
                 }
                 Ok(Cmd::Drain(tx)) => {
-                    let out = if sample_rate == WHISPER_SR {
-                        std::mem::take(&mut buffer)
-                    } else {
-                        resample_to_16k(&buffer, sample_rate)
-                    };
-                    buffer.clear();
-                    let _ = tx.send(out);
+                    // A drain the caller gave up on (timeout) keeps its
+                    // samples for the next one.
+                    if let Err(SendError(back)) = tx.send(std::mem::take(&mut buffer)) {
+                        buffer = back;
+                    }
                 }
                 Ok(Cmd::Shutdown) => {
                     let _ = audio_client.stop_stream();
@@ -214,8 +220,23 @@ fn run_worker(cmd_rx: Receiver<Cmd>, ready_tx: mpsc::SyncSender<Result<()>>) {
         }
 
         let mono = decode_mono(&raw, channels as usize, sample_type, bits_per_sample);
-        buffer.extend(mono);
+        match resampler.as_mut() {
+            Some(r) => r.push(&mono, |frame: &[f32]| buffer.extend_from_slice(frame)),
+            None => buffer.extend(mono),
+        }
     }
+}
+
+/// A stateful resampler to 16 kHz, or `None` when the device already runs
+/// at 16 kHz (or reports no rate).
+fn new_resampler(sample_rate: u32) -> Option<FrameResampler> {
+    (sample_rate != WHISPER_SR && sample_rate > 0).then(|| {
+        FrameResampler::new(
+            sample_rate as usize,
+            WHISPER_SR as usize,
+            Duration::from_millis(30),
+        )
+    })
 }
 
 struct StreamSetup {
@@ -355,31 +376,6 @@ fn decode_mono(
             acc += sample;
         }
         out.push(acc / channels as f32);
-    }
-    out
-}
-
-/// Resample a mono f32 buffer from `src_rate` down to 16 kHz using simple
-/// linear interpolation. For Whisper-grade speech the quality is fine and we
-/// avoid an extra heavy FFT-based dependency in the hot path.
-fn resample_to_16k(samples: &[f32], src_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || src_rate == 0 || src_rate == WHISPER_SR {
-        return samples.to_vec();
-    }
-    let ratio = src_rate as f64 / WHISPER_SR as f64;
-    let out_len = ((samples.len() as f64) / ratio).floor() as usize;
-    let mut out = Vec::with_capacity(out_len);
-    for i in 0..out_len {
-        let src_f = i as f64 * ratio;
-        let src_idx = src_f.floor() as usize;
-        let frac = (src_f - src_idx as f64) as f32;
-        let s0 = samples[src_idx];
-        let s1 = if src_idx + 1 < samples.len() {
-            samples[src_idx + 1]
-        } else {
-            s0
-        };
-        out.push(s0 + (s1 - s0) * frac);
     }
     out
 }

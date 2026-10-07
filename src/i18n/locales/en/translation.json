@@ -630,9 +630,12 @@
     "portableUpdateButton": "Open GitHub Releases",
     "mandatoryUpdateTitle": "Update required",
     "mandatoryUpdateMessage": "Version {{version}} is required to keep transcribing correctly. It is installing now and the app will restart.",
-    "mandatoryUpdateWaitingMeeting": "It will install as soon as the current meeting ends.",
+    "mandatoryUpdateWaitingMeeting": "It will install as soon as the current meeting ends and finishes uploading.",
     "mandatoryUpdateFailed": "The update could not be installed: {{error}}",
-    "mandatoryUpdateRetry": "Retry"
+    "mandatoryUpdateRetry": "Retry",
+    "mandatoryUpdateNotFound": "The update could not be downloaded right now. Check your connection and retry.",
+    "mandatoryUpdatePortable": "This portable install has to be updated by hand.",
+    "mandatoryUpdateDismiss": "Later"
   },
   "common": {
     "loading": "Loading...",
@@ -883,6 +886,12 @@
     "addPlaceholder": "Name or email",
     "add": "Add",
     "remove": "Remove {{name}}",
-    "saveFailed": "Could not save the participants"
+    "saveFailed": "Could not save the participants",
+    "connectCalendar": "Connect your calendar (Google or Outlook) in Integrations to detect the participants automatically.",
+    "editedAfterUpload": "This meeting is already uploaded: changes are saved here and sent the next time you sync it.",
+    "calendarContextDropped": "The meeting was uploaded without its calendar participants because the server rejected them.",
+    "syncPending": "Waiting to upload",
+    "syncFailed": "Upload failed, it will be retried automatically",
+    "syncSynced": "Uploaded"
   }
 }

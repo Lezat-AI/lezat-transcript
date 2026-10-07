@@ -65,6 +65,15 @@ pub fn meeting_active(mgr: State<Arc<MeetingManager>>) -> Option<i64> {
     mgr.active_meeting_id()
 }
 
+/// True while a meeting records or a stopped one is still being finalized,
+/// transcribed, matched to the calendar or uploaded. A relaunch (mandatory
+/// update) must wait for it.
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_busy(mgr: State<Arc<MeetingManager>>) -> bool {
+    mgr.is_busy()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn list_meetings(

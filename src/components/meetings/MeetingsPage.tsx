@@ -141,6 +141,9 @@ export function MeetingsPage() {
   const cloudSyncEnabled = settings?.cloud_sync_enabled ?? false;
 
   const [activeId, setActiveId] = useState<number | null>(null);
+  // The meeting just stopped: its participants can still be confirmed while
+  // it finishes transcribing and uploads.
+  const [lastMeetingId, setLastMeetingId] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [liveChunks, setLiveChunks] = useState<MeetingChunk[]>([]);
   const [pastMeetings, setPastMeetings] = useState<MeetingRecord[]>([]);
@@ -154,6 +157,8 @@ export function MeetingsPage() {
   const [syncStatus, setSyncStatus] = useState<
     Record<number, { state: "syncing" | "success" | "failed"; message?: string }>
   >({});
+
+  const contextMeetingId = activeId ?? lastMeetingId;
 
   const elapsedStart = useRef<number | null>(null);
   const liveEndRef = useRef<HTMLDivElement | null>(null);
@@ -255,10 +260,12 @@ export function MeetingsPage() {
       const pl = evt.payload;
       if (pl.state === "started") {
         setActiveId(pl.meeting_id);
+        setLastMeetingId(null);
         setLiveChunks([]);
         elapsedStart.current = Date.now();
       } else if (pl.state === "stopped") {
         setStopping(false);
+        setLastMeetingId(pl.meeting_id);
         setActiveId(null);
         refreshList();
       } else if (pl.state === "error") {
@@ -491,8 +498,8 @@ export function MeetingsPage() {
         )}
       </section>
 
-      {activeId !== null && cloudSyncEnabled && (
-        <MeetingContextPanel meetingId={activeId} />
+      {contextMeetingId !== null && cloudSyncEnabled && (
+        <MeetingContextPanel meetingId={contextMeetingId} />
       )}
 
       {/* Cloud sync status for last completed meeting */}

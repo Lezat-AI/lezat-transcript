@@ -15,7 +15,7 @@ use std::net::TcpListener;
 use std::time::Duration;
 use tauri_specta::Event;
 
-use crate::managers::meeting::{MeetingParticipant, MeetingRecord};
+use crate::managers::meeting::{MeetingParticipant, MeetingRecord, PARTICIPANTS_SOURCE_USER};
 use crate::settings::AppSettings;
 
 // ─────────────────────────── events ───────────────────────────────
@@ -29,6 +29,16 @@ pub enum CloudSyncEvent {
     Success { meeting_id: i64, remote_id: String },
     #[serde(rename = "failed")]
     Failed { meeting_id: i64, error: String },
+    /// The upload went through but something was degraded. `code` is
+    /// machine-readable (e.g. "calendar_context_dropped") for the UI to
+    /// translate.
+    #[serde(rename = "warning")]
+    Warning { meeting_id: i64, code: String },
+}
+
+/// The first `max` characters of `s` (never splits a UTF-8 character).
+pub fn truncate_chars(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
 }
 
 // ─────────────────────────── payloads ─────────────────────────────
@@ -54,8 +64,9 @@ struct DesktopMeetingPayload {
     /// Calendar event the recording was matched to, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     calendar_event_id: Option<String>,
-    /// Attendees confirmed in the app. Omitted when the user has none, so the
-    /// backend falls back to its own calendar lookup.
+    /// Attendees confirmed in the app. Omitted when there are none, so the
+    /// backend falls back to its own calendar lookup; an explicit `[]` when
+    /// the user removed everyone.
     #[serde(skip_serializing_if = "Option::is_none")]
     participants: Option<Vec<ParticipantPayload>>,
 }
@@ -72,6 +83,10 @@ struct DesktopChunkPayload {
     offset_ms: u64,
     source: String,
     text: String,
+    /// Audio length of the chunk (chunks are 12–20 s, cut at pauses). Older
+    /// recordings don't have it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
 }
 
 // ─────────────────────────── responses ────────────────────────────
@@ -322,53 +337,30 @@ fn api_key(settings: &AppSettings) -> Result<&str> {
         .ok_or_else(|| anyhow!("Cloud sync API key not configured"))
 }
 
+/// How an upload went beyond the backend's answer.
+#[derive(Debug, Clone)]
+pub struct SyncOutcome {
+    pub response: IngestResponse,
+    /// Set when the backend rejected the calendar context (HTTP 422) and the
+    /// meeting was uploaded without it: "participants" or
+    /// "participants_and_event".
+    pub calendar_context_dropped: Option<&'static str>,
+}
+
 /// Send a meeting transcription to the backend. Retries up to 3 times
 /// with exponential backoff on transient errors (network, 5xx).
-pub fn sync_meeting_to_cloud(
-    settings: &AppSettings,
-    record: &MeetingRecord,
-) -> Result<IngestResponse> {
-    sync_meeting_to_cloud_inner(settings, record, false, None)
-}
-
-pub fn sync_meeting_to_cloud_force(
-    settings: &AppSettings,
-    record: &MeetingRecord,
-) -> Result<IngestResponse> {
-    sync_meeting_to_cloud_inner(settings, record, true, None)
-}
-
-/// Like [`sync_meeting_to_cloud`], also sending the recording's diagnostics.
-pub fn sync_meeting_to_cloud_with_diagnostics(
-    settings: &AppSettings,
-    record: &MeetingRecord,
-    client_diagnostics: Option<serde_json::Value>,
-) -> Result<IngestResponse> {
-    sync_meeting_to_cloud_inner(settings, record, false, client_diagnostics)
-}
-
-fn sync_meeting_to_cloud_inner(
+///
+/// `force_reprocess` makes the backend extract tasks again (manual re-sync).
+/// `client_diagnostics` (an object) gets `client_sent_at` (UTC ms) stamped on
+/// every attempt.
+pub fn sync_meeting(
     settings: &AppSettings,
     record: &MeetingRecord,
     force_reprocess: bool,
     client_diagnostics: Option<serde_json::Value>,
-) -> Result<IngestResponse> {
+) -> Result<SyncOutcome> {
     let url = format!("{}/api/desktop/ingest", base_url(settings)?);
     let key = api_key(settings)?;
-
-    let participants: Vec<ParticipantPayload> = record
-        .participants
-        .iter()
-        .filter(|p| !p.name.trim().is_empty() || p.email.is_some())
-        .map(|p| ParticipantPayload {
-            name: p.name.trim().to_string(),
-            email: p
-                .email
-                .as_ref()
-                .map(|e| e.trim().to_string())
-                .filter(|e| !e.is_empty()),
-        })
-        .collect();
 
     let mut payload = DesktopMeetingPayload {
         device_id: settings.device_id.clone(),
@@ -385,19 +377,16 @@ fn sync_meeting_to_cloud_inner(
                 offset_ms: c.offset_ms,
                 source: c.source.clone(),
                 text: c.text.clone(),
+                duration_ms: c.duration_ms.filter(|d| *d > 0),
             })
             .collect(),
         model_used: Some(settings.selected_model.clone()),
         app_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         is_daily: record.is_daily,
         force_reprocess,
-        client_diagnostics,
+        client_diagnostics: Some(client_diagnostics.unwrap_or_else(|| serde_json::json!({}))),
         calendar_event_id: record.calendar_event_id.clone(),
-        participants: if participants.is_empty() {
-            None
-        } else {
-            Some(participants)
-        },
+        participants: participants_payload(record),
     };
 
     // Processing a long meeting (task extraction, owners, boards) takes well
@@ -409,9 +398,11 @@ fn sync_meeting_to_cloud_inner(
         .map_err(|e| anyhow!("Failed to build HTTP client: {e}"))?;
     let backoff = [1, 3, 9]; // seconds
 
+    let mut dropped: Option<&'static str> = None;
     let mut attempt = 0;
     while attempt < backoff.len() {
         let delay_secs = backoff[attempt];
+        stamp_diagnostics(&mut payload.client_diagnostics, dropped);
         let result = client
             .post(&url)
             .header("X-API-Key", key)
@@ -421,31 +412,44 @@ fn sync_meeting_to_cloud_inner(
 
         match result {
             Ok(resp) if resp.status().is_success() => {
-                return resp
+                let response = resp
                     .json::<IngestResponse>()
-                    .map_err(|e| anyhow!("Failed to parse ingest response: {e}"));
+                    .map_err(|e| anyhow!("Failed to parse ingest response: {e}"))?;
+                return Ok(SyncOutcome {
+                    response,
+                    calendar_context_dropped: dropped,
+                });
             }
             Ok(resp) if resp.status().as_u16() == 401 => {
                 return Err(anyhow!("Invalid API key (HTTP 401)"));
             }
             Ok(resp) if resp.status().as_u16() == 422 => {
-                let body = resp.text().unwrap_or_default();
+                let body = truncate_chars(&resp.text().unwrap_or_default(), 500);
                 // Older backends reject attendees without an email. The
-                // meeting matters more than its attendee list, so retry once
-                // without the calendar context instead of failing the upload.
-                if payload.participants.is_some() || payload.calendar_event_id.is_some() {
+                // meeting matters more than its attendee list: retry without
+                // the attendees first, and only then without the event too.
+                // Same attempt, no backoff.
+                if payload.participants.is_some() {
                     warn!(
-                        "Cloud sync: backend rejected calendar context (HTTP 422), retrying without it — {body}"
+                        "Cloud sync: backend rejected participants (HTTP 422), retrying without them — {body}"
                     );
                     payload.participants = None;
+                    dropped = Some("participants");
+                    continue;
+                }
+                if payload.calendar_event_id.is_some() {
+                    warn!(
+                        "Cloud sync: backend rejected the calendar event (HTTP 422), retrying without it — {body}"
+                    );
                     payload.calendar_event_id = None;
-                    continue; // same attempt, no backoff
+                    dropped = Some("participants_and_event");
+                    continue;
                 }
                 return Err(anyhow!("Validation error (HTTP 422): {body}"));
             }
             Ok(resp) if resp.status().is_server_error() => {
                 let status = resp.status();
-                let body = resp.text().unwrap_or_default();
+                let body = truncate_chars(&resp.text().unwrap_or_default(), 500);
                 warn!(
                     "Cloud sync attempt {}/{}: server error {} — {body}",
                     attempt + 1,
@@ -455,7 +459,7 @@ fn sync_meeting_to_cloud_inner(
             }
             Ok(resp) => {
                 let status = resp.status();
-                let body = resp.text().unwrap_or_default();
+                let body = truncate_chars(&resp.text().unwrap_or_default(), 500);
                 return Err(anyhow!("Cloud sync failed (HTTP {status}): {body}"));
             }
             Err(e) => {
@@ -477,6 +481,48 @@ fn sync_meeting_to_cloud_inner(
         "Cloud sync failed after {} attempts",
         backoff.len()
     ))
+}
+
+/// Attendees to send. `None` (omitted) when there are none, so the backend
+/// can look the meeting up itself; an explicit empty list when the user
+/// removed every attendee on purpose.
+fn participants_payload(record: &MeetingRecord) -> Option<Vec<ParticipantPayload>> {
+    let participants: Vec<ParticipantPayload> = record
+        .participants
+        .iter()
+        .filter(|p| !p.name.trim().is_empty() || p.email.is_some())
+        .map(|p| ParticipantPayload {
+            name: p.name.trim().to_string(),
+            email: p
+                .email
+                .as_ref()
+                .map(|e| e.trim().to_string())
+                .filter(|e| !e.is_empty()),
+        })
+        .collect();
+    let user_cleared = record.participants_source.as_deref() == Some(PARTICIPANTS_SOURCE_USER);
+    if participants.is_empty() && !user_cleared {
+        None
+    } else {
+        Some(participants)
+    }
+}
+
+/// Stamp the send time (and a dropped calendar context) on the diagnostics.
+fn stamp_diagnostics(diagnostics: &mut Option<serde_json::Value>, dropped: Option<&'static str>) {
+    let Some(obj) = diagnostics.as_mut().and_then(|d| d.as_object_mut()) else {
+        return;
+    };
+    obj.insert(
+        "client_sent_at".to_string(),
+        serde_json::json!(Utc::now().timestamp_millis()),
+    );
+    if let Some(what) = dropped {
+        obj.insert(
+            "calendar_context_dropped".to_string(),
+            serde_json::json!(what),
+        );
+    }
 }
 
 // ─────────────────────────── calendar ─────────────────────────────
@@ -542,6 +588,17 @@ impl CalendarEvent {
 struct CalendarEventsResponse {
     #[serde(default)]
     events: Vec<CalendarEvent>,
+    /// Newer backends say whether any calendar is connected; `None` = unknown.
+    #[serde(default)]
+    calendar_connected: Option<bool>,
+}
+
+/// Events from the user's calendars plus whether one is connected at all.
+#[derive(Debug, Default)]
+pub struct CalendarEvents {
+    pub events: Vec<CalendarEvent>,
+    /// `None` when the backend doesn't say (older backends, HTTP 404).
+    pub calendar_connected: Option<bool>,
 }
 
 /// Events overlapping `[start, end]`. An empty list when no calendar is
@@ -550,7 +607,7 @@ pub fn fetch_calendar_events(
     settings: &AppSettings,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
-) -> Result<Vec<CalendarEvent>> {
+) -> Result<CalendarEvents> {
     let url = format!("{}/api/desktop/calendar/events", base_url(settings)?);
     let key = api_key(settings)?;
     let client = Client::builder()
@@ -570,17 +627,20 @@ pub fn fetch_calendar_events(
 
     let status = resp.status();
     if status.as_u16() == 404 {
-        return Ok(Vec::new());
+        return Ok(CalendarEvents::default());
     }
     let body = resp.text().unwrap_or_default();
     if !status.is_success() {
         return Err(anyhow!(
             "Failed to fetch calendar events (HTTP {status}): {}",
-            &body[..body.len().min(300)]
+            truncate_chars(&body, 300)
         ));
     }
     serde_json::from_str::<CalendarEventsResponse>(&body)
-        .map(|r| r.events)
+        .map(|r| CalendarEvents {
+            events: r.events,
+            calendar_connected: r.calendar_connected,
+        })
         .map_err(|e| anyhow!("Failed to parse calendar events: {e}"))
 }
 
@@ -593,6 +653,45 @@ fn parse_event_time(value: Option<&str>) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
+/// Start and end of an event that can be a meeting (both parseable, not an
+/// all-day block).
+pub fn event_span(ev: &CalendarEvent) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let start = parse_event_time(ev.start.as_deref())?;
+    let end = parse_event_time(ev.end.as_deref())?;
+    let length = (end - start).num_seconds();
+    (length > 0 && length <= MAX_MEETING_EVENT_SECONDS).then_some((start, end))
+}
+
+/// How early a recording may start before its event and still match it.
+const EARLY_START_SECONDS: i64 = 10 * 60;
+
+/// The event a recording that starts at `now` belongs to: the one in
+/// progress (start ≤ now < end; with several, the latest to start), else one
+/// starting within the next few minutes (recording started early).
+///
+/// Weighing a window ahead of `now` instead picked the next back-to-back
+/// meeting (10:00–10:30 and 10:30–11:00 started at 10:16 matched the second).
+pub fn pick_event_at_start(events: &[CalendarEvent], now: DateTime<Utc>) -> Option<&CalendarEvent> {
+    let spans: Vec<(DateTime<Utc>, DateTime<Utc>, &CalendarEvent)> = events
+        .iter()
+        .filter_map(|ev| event_span(ev).map(|(s, e)| (s, e, ev)))
+        .collect();
+    let in_progress = spans
+        .iter()
+        .filter(|(start, end, _)| *start <= now && now < *end)
+        .max_by_key(|(start, end, _)| (*start, std::cmp::Reverse(*end)))
+        .map(|(_, _, ev)| *ev);
+    in_progress.or_else(|| {
+        spans
+            .iter()
+            .filter(|(start, _, _)| {
+                *start > now && (*start - now).num_seconds() <= EARLY_START_SECONDS
+            })
+            .min_by_key(|(start, _, _)| *start)
+            .map(|(_, _, ev)| *ev)
+    })
+}
+
 /// The event that overlaps `[rec_start, rec_end]` the most. Ties go to the
 /// event that starts closest to the recording.
 pub fn pick_best_event(
@@ -603,12 +702,7 @@ pub fn pick_best_event(
     events
         .iter()
         .filter_map(|ev| {
-            let start = parse_event_time(ev.start.as_deref())?;
-            let end = parse_event_time(ev.end.as_deref())?;
-            let length = (end - start).num_seconds();
-            if length <= 0 || length > MAX_MEETING_EVENT_SECONDS {
-                return None;
-            }
+            let (start, end) = event_span(ev)?;
             let overlap = (end.min(rec_end) - start.max(rec_start)).num_seconds();
             if overlap <= 0 {
                 return None;
@@ -644,7 +738,7 @@ pub fn fetch_action_items(settings: &AppSettings) -> Result<CloudActionItemsResp
     serde_json::from_str::<CloudActionItemsResponse>(&body).map_err(|e| {
         anyhow!(
             "Failed to parse action items: {e}\nBody: {}",
-            &body[..body.len().min(500)]
+            truncate_chars(&body, 500)
         )
     })
 }
@@ -715,7 +809,7 @@ pub fn fetch_transcriptions(settings: &AppSettings) -> Result<CloudTranscription
     serde_json::from_str::<CloudTranscriptionsResponse>(&body).map_err(|e| {
         anyhow!(
             "Failed to parse transcriptions: {e}\nBody: {}",
-            &body[..body.len().min(500)]
+            truncate_chars(&body, 500)
         )
     })
 }
@@ -744,7 +838,7 @@ pub fn fetch_integrations_status(settings: &AppSettings) -> Result<IntegrationsS
     serde_json::from_str::<IntegrationsStatusResponse>(&body).map_err(|e| {
         anyhow!(
             "Failed to parse integrations: {e}\nBody: {}",
-            &body[..body.len().min(500)]
+            truncate_chars(&body, 500)
         )
     })
 }
@@ -1157,7 +1251,7 @@ pub fn fetch_daily_reports(settings: &AppSettings) -> Result<DailyReportsRespons
     serde_json::from_str::<DailyReportsResponse>(&body).map_err(|e| {
         anyhow!(
             "Failed to parse daily reports: {e}\nBody: {}",
-            &body[..body.len().min(500)]
+            truncate_chars(&body, 500)
         )
     })
 }
@@ -1581,6 +1675,61 @@ mod tests {
             at("2026-10-07T10:00:00Z"),
         );
         assert!(best.is_none());
+    }
+
+    #[test]
+    fn back_to_back_meetings_pick_the_one_in_progress_at_start() {
+        let events = vec![
+            event("A", "2026-10-07T10:00:00Z", "2026-10-07T10:30:00Z"),
+            event("B", "2026-10-07T10:30:00Z", "2026-10-07T11:00:00Z"),
+        ];
+        let best = pick_event_at_start(&events, at("2026-10-07T10:16:00Z"));
+        assert_eq!(best.map(|e| e.id.as_str()), Some("A"));
+    }
+
+    #[test]
+    fn back_to_back_meetings_at_stop_use_the_real_window() {
+        let events = vec![
+            event("A", "2026-10-07T10:00:00Z", "2026-10-07T10:30:00Z"),
+            event("B", "2026-10-07T10:30:00Z", "2026-10-07T11:00:00Z"),
+        ];
+        let best = pick_best_event(
+            &events,
+            at("2026-10-07T10:16:00Z"),
+            at("2026-10-07T10:31:00Z"),
+        );
+        assert_eq!(best.map(|e| e.id.as_str()), Some("A"));
+    }
+
+    #[test]
+    fn overlapping_events_in_progress_prefer_the_latest_start() {
+        let events = vec![
+            event("long", "2026-10-07T09:00:00Z", "2026-10-07T12:00:00Z"),
+            event("standup", "2026-10-07T10:00:00Z", "2026-10-07T10:15:00Z"),
+        ];
+        let best = pick_event_at_start(&events, at("2026-10-07T10:05:00Z"));
+        assert_eq!(best.map(|e| e.id.as_str()), Some("standup"));
+    }
+
+    #[test]
+    fn early_start_matches_the_upcoming_event() {
+        let events = vec![event(
+            "soon",
+            "2026-10-07T10:00:00Z",
+            "2026-10-07T10:30:00Z",
+        )];
+        assert_eq!(
+            pick_event_at_start(&events, at("2026-10-07T09:55:00Z")).map(|e| e.id.as_str()),
+            Some("soon")
+        );
+        assert!(pick_event_at_start(&events, at("2026-10-07T09:30:00Z")).is_none());
+    }
+
+    #[test]
+    fn truncates_on_char_boundaries() {
+        let body = "é".repeat(400);
+        assert_eq!(truncate_chars(&body, 300).chars().count(), 300);
+        assert_eq!(truncate_chars("abc", 300), "abc");
     }
 
     #[test]

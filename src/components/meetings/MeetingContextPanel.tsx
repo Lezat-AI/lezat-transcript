@@ -1,6 +1,13 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarDays, Headphones, Plus, Users, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarDays,
+  Headphones,
+  Plus,
+  Users,
+  X,
+} from "lucide-react";
 import { commands, events } from "@/bindings";
 import type { MeetingParticipant, OutputDeviceHint } from "@/bindings";
 
@@ -75,8 +82,33 @@ export function HeadphonesNotice({ enabled }: { enabled: boolean }) {
   );
 }
 
-/// Calendar match + editable participant list for the meeting being
-/// recorded. Edits are saved right away and go out with the upload.
+/// Whether a calendar (Google/Outlook) is connected: `null` while unknown
+/// (not loaded yet, or the backend couldn't be reached).
+function useCalendarConnected(): boolean | null {
+  const [connected, setConnected] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    commands
+      .cloudGetIntegrationsStatus()
+      .then((res) => {
+        if (!alive || res.status !== "ok") return;
+        setConnected(
+          res.data.integrations.some(
+            (i) => i.connected && i.provider.includes("calendar"),
+          ),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return connected;
+}
+
+/// Calendar match + editable participant list of a meeting, while it is
+/// recorded or afterwards (meeting detail). Edits are saved right away and
+/// go out with the next upload.
 export function MeetingContextPanel({ meetingId }: { meetingId: number }) {
   const { t } = useTranslation();
   const [eventTitle, setEventTitle] = useState<string | null>(null);
@@ -84,12 +116,19 @@ export function MeetingContextPanel({ meetingId }: { meetingId: number }) {
   const [participants, setParticipants] = useState<MeetingParticipant[]>([]);
   const [draft, setDraft] = useState("");
   const [saveError, setSaveError] = useState(false);
+  const [syncState, setSyncState] = useState<string | null>(null);
+  const [editedHere, setEditedHere] = useState(false);
+  const [contextDropped, setContextDropped] = useState(false);
+  const calendarConnected = useCalendarConnected();
 
   useEffect(() => {
     let alive = true;
     setEventTitle(null);
     setHasEvent(false);
     setParticipants([]);
+    setSyncState(null);
+    setEditedHere(false);
+    setContextDropped(false);
     commands
       .getMeeting(meetingId)
       .then((res) => {
@@ -97,6 +136,7 @@ export function MeetingContextPanel({ meetingId }: { meetingId: number }) {
         setHasEvent(Boolean(res.data.calendar_event_id));
         setEventTitle(res.data.calendar_event_title ?? null);
         setParticipants(res.data.participants ?? []);
+        setSyncState(res.data.sync_state ?? null);
       })
       .catch(() => undefined);
 
@@ -106,15 +146,25 @@ export function MeetingContextPanel({ meetingId }: { meetingId: number }) {
       setEventTitle(evt.payload.calendar_event_title);
       setParticipants(evt.payload.participants);
     });
+    const unlistenSync = events.cloudSyncEvent.listen((evt) => {
+      const p = evt.payload;
+      if (p.meeting_id !== meetingId) return;
+      if (p.state === "success") setSyncState("synced");
+      else if (p.state === "failed") setSyncState("failed");
+      else if (p.state === "warning" && p.code === "calendar_context_dropped")
+        setContextDropped(true);
+    });
     return () => {
       alive = false;
       unlisten.then((fn) => fn()).catch(() => undefined);
+      unlistenSync.then((fn) => fn()).catch(() => undefined);
     };
   }, [meetingId]);
 
   const save = useCallback(
     async (next: MeetingParticipant[]) => {
       setParticipants(next);
+      setEditedHere(true);
       try {
         const res = await commands.setMeetingParticipants(meetingId, next);
         setSaveError(res.status !== "ok");
@@ -148,10 +198,32 @@ export function MeetingContextPanel({ meetingId }: { meetingId: number }) {
           </span>
         ) : (
           <span className="text-mid-gray">
-            {t("meetingContext.noCalendarMeeting")}
+            {calendarConnected === false
+              ? t("meetingContext.connectCalendar")
+              : t("meetingContext.noCalendarMeeting")}
+          </span>
+        )}
+        {syncState && (
+          <span
+            className={`ml-auto shrink-0 text-xs ${
+              syncState === "failed" ? "text-red-500" : "text-mid-gray"
+            }`}
+          >
+            {syncState === "synced"
+              ? t("meetingContext.syncSynced")
+              : syncState === "failed"
+                ? t("meetingContext.syncFailed")
+                : t("meetingContext.syncPending")}
           </span>
         )}
       </div>
+
+      {contextDropped && (
+        <div className="flex items-start gap-2 text-xs rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 px-2 py-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>{t("meetingContext.calendarContextDropped")}</span>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
@@ -214,6 +286,11 @@ export function MeetingContextPanel({ meetingId }: { meetingId: number }) {
         {saveError && (
           <p className="text-xs text-red-500">
             {t("meetingContext.saveFailed")}
+          </p>
+        )}
+        {editedHere && syncState === "synced" && !saveError && (
+          <p className="text-xs text-mid-gray">
+            {t("meetingContext.editedAfterUpload")}
           </p>
         )}
       </div>

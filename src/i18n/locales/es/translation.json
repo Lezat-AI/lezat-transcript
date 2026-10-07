@@ -630,9 +630,12 @@
     "portableUpdateButton": "Abrir GitHub Releases",
     "mandatoryUpdateTitle": "Actualización obligatoria",
     "mandatoryUpdateMessage": "Se requiere la versión {{version}} para seguir transcribiendo correctamente. Se está instalando y la app se reiniciará.",
-    "mandatoryUpdateWaitingMeeting": "Se instalará apenas termine la reunión en curso.",
+    "mandatoryUpdateWaitingMeeting": "Se instalará en cuanto termine la reunión actual y se acabe de subir.",
     "mandatoryUpdateFailed": "No se pudo instalar la actualización: {{error}}",
-    "mandatoryUpdateRetry": "Reintentar"
+    "mandatoryUpdateRetry": "Reintentar",
+    "mandatoryUpdateNotFound": "No se pudo descargar la actualización en este momento. Revisa tu conexión y vuelve a intentarlo.",
+    "mandatoryUpdatePortable": "Esta instalación portátil se debe actualizar a mano.",
+    "mandatoryUpdateDismiss": "Más tarde"
   },
   "common": {
     "loading": "Cargando...",
@@ -883,6 +886,12 @@
     "addPlaceholder": "Nombre o correo",
     "add": "Agregar",
     "remove": "Quitar a {{name}}",
-    "saveFailed": "No se pudieron guardar los participantes"
+    "saveFailed": "No se pudieron guardar los participantes",
+    "connectCalendar": "Conecta tu calendario (Google u Outlook) en Integraciones para detectar los participantes automáticamente.",
+    "editedAfterUpload": "Esta reunión ya se subió: los cambios se guardan aquí y se envían la próxima vez que la sincronices.",
+    "calendarContextDropped": "La reunión se subió sin los participantes del calendario porque el servidor los rechazó.",
+    "syncPending": "Pendiente de subir",
+    "syncFailed": "No se pudo subir, se reintentará automáticamente",
+    "syncSynced": "Subida"
   }
 }

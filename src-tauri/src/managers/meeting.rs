@@ -19,9 +19,9 @@ use log::{debug, error, info, warn};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -140,6 +140,44 @@ const CUT_SILENCE_FRAMES: usize = 10;
 /// How often the capture loop collects new samples and checks for a cut.
 const DRAIN_INTERVAL: Duration = Duration::from_millis(250);
 
+/// A source whose samples arrive this much later than the audio already
+/// pending (e.g. system audio while nothing plays: some backends deliver no
+/// samples at all) has a hole in its timeline.
+const GAP_TOLERANCE_MS: u64 = 1_000;
+
+/// Holes up to this long are filled with silence so the pending audio keeps
+/// its wall-clock position; longer ones end the pending chunk instead.
+const GAP_PAD_MAX_MS: u64 = CHUNK_MAX_SECONDS as u64 * 1_000;
+
+/// After this many VAD errors in a row the source stops using the VAD and
+/// classifies frames by energy instead.
+const VAD_MAX_CONSECUTIVE_ERRORS: u32 = 10;
+
+/// Frame RMS above which the energy fallback counts a frame as speech
+/// (about -40 dBFS).
+const ENERGY_SPEECH_RMS: f32 = 0.01;
+
+/// How often the default output device is sampled during a meeting.
+const OUTPUT_PROBE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Who set a meeting's participants.
+pub const PARTICIPANTS_SOURCE_USER: &str = "user";
+pub const PARTICIPANTS_SOURCE_CALENDAR: &str = "calendar";
+
+/// Upload state of a meeting (`sync_state` column).
+pub const SYNC_PENDING: &str = "pending";
+pub const SYNC_FAILED: &str = "failed";
+pub const SYNC_SYNCED: &str = "synced";
+
+/// Automatic upload retries: first check after start-up, then this often.
+const RETRY_FIRST_CHECK: Duration = Duration::from_secs(30);
+const RETRY_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+/// Wait before retry n (n ≥ 1): 5 min, doubling, at most 6 h.
+const RETRY_BASE_SECS: i64 = 5 * 60;
+const RETRY_MAX_SECS: i64 = 6 * 60 * 60;
+/// After this many attempts only a manual sync uploads the meeting.
+const RETRY_MAX_ATTEMPTS: u32 = 12;
+
 // ─────────────────────────────── types ───────────────────────────────
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -149,6 +187,10 @@ pub struct MeetingChunk {
     /// "mic" or "system" (second reserved for dual-stream work)
     pub source: String,
     pub text: String,
+    /// Audio length of the chunk in ms (12–20 s, cut at pauses). Missing on
+    /// recordings made before it was tracked.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -171,6 +213,14 @@ pub struct MeetingRecord {
     /// Attendees: detected from the calendar and/or edited by the user.
     #[serde(default)]
     pub participants: Vec<MeetingParticipant>,
+    /// Who set `participants`: "calendar", "user", or nobody yet. An empty
+    /// list set by the user means they removed everyone on purpose.
+    #[serde(default)]
+    pub participants_source: Option<String>,
+    /// Upload state: "pending" | "failed" | "synced". `None` for meetings
+    /// recorded without cloud sync or before this was tracked.
+    #[serde(default)]
+    pub sync_state: Option<String>,
 }
 
 /// One meeting attendee. Names added by hand have no email.
@@ -228,10 +278,24 @@ const OPTIONAL_COLUMNS: &[(&str, &str)] = &[
     ("calendar_event_id", "TEXT"),
     ("calendar_event_title", "TEXT"),
     ("participants_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("participants_source", "TEXT"),
+    ("sync_state", "TEXT"),
+    ("sync_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_sync_attempt_at", "INTEGER"),
+    ("client_diagnostics_json", "TEXT"),
 ];
 
 const MEETING_COLUMNS: &str = "id, started_at, ended_at, title, duration_ms, transcript_text, \
-     chunks_json, audio_path, is_daily, calendar_event_id, calendar_event_title, participants_json";
+     chunks_json, audio_path, is_daily, calendar_event_id, calendar_event_title, participants_json, \
+     participants_source, sync_state";
+
+/// A meeting waiting for an automatic upload retry.
+#[derive(Debug, Clone)]
+pub struct SyncCandidate {
+    pub id: i64,
+    pub attempts: u32,
+    pub last_attempt_at: Option<i64>,
+}
 
 impl MeetingsStore {
     pub fn new(app: &AppHandle) -> Result<Self> {
@@ -303,15 +367,26 @@ impl MeetingsStore {
                 .flatten()
                 .and_then(|json| serde_json::from_str(&json).ok())
                 .unwrap_or_default(),
+            participants_source: row
+                .get::<_, Option<String>>("participants_source")
+                .unwrap_or(None),
+            sync_state: row.get::<_, Option<String>>("sync_state").unwrap_or(None),
         })
     }
 
-    pub fn insert(&self, title: &str, started_at: i64, is_daily: bool) -> Result<i64> {
+    /// `sync_state` is `Some("pending")` when the meeting will be uploaded.
+    pub fn insert(
+        &self,
+        title: &str,
+        started_at: i64,
+        is_daily: bool,
+        sync_state: Option<&str>,
+    ) -> Result<i64> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO meetings (started_at, title, duration_ms, transcript_text, chunks_json, is_daily)
-             VALUES (?1, ?2, 0, '', '[]', ?3)",
-            params![started_at, title, is_daily as i64],
+            "INSERT INTO meetings (started_at, title, duration_ms, transcript_text, chunks_json, is_daily, sync_state)
+             VALUES (?1, ?2, 0, '', '[]', ?3, ?4)",
+            params![started_at, title, is_daily as i64, sync_state],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -391,32 +466,45 @@ impl MeetingsStore {
         Ok(())
     }
 
-    /// Store the calendar match. Participants are only filled in when the
-    /// user hasn't added any yet, so a late lookup never clobbers edits.
-    /// Returns the participants now stored.
+    /// Store the calendar match and merge its attendees into the meeting's
+    /// (see [`merge_calendar_participants`]), so a late lookup never
+    /// clobbers user edits. Returns the participants now stored.
     pub fn set_calendar_context(
         &self,
         meeting_id: i64,
         event_id: &str,
         event_title: Option<&str>,
-        participants: &[MeetingParticipant],
+        detected: &[MeetingParticipant],
     ) -> Result<Vec<MeetingParticipant>> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE meetings SET calendar_event_id = ?1, calendar_event_title = ?2 WHERE id = ?3",
-            params![event_id, event_title, meeting_id],
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let (json, source): (Option<String>, Option<String>) = tx.query_row(
+            "SELECT participants_json, participants_source FROM meetings WHERE id = ?1",
+            params![meeting_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        conn.execute(
-            "UPDATE meetings SET participants_json = ?1
-             WHERE id = ?2 AND (participants_json IS NULL OR participants_json = '[]')",
-            params![serde_json::to_string(participants)?, meeting_id],
+        let current: Vec<MeetingParticipant> = json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let (next, next_source) =
+            merge_calendar_participants(&current, source.as_deref(), detected);
+        tx.execute(
+            "UPDATE meetings SET calendar_event_id = ?1, calendar_event_title = ?2,
+                 participants_json = ?3, participants_source = ?4
+             WHERE id = ?5",
+            params![
+                event_id,
+                event_title,
+                serde_json::to_string(&next)?,
+                next_source,
+                meeting_id
+            ],
         )?;
-        Ok(self
-            .get(meeting_id)?
-            .map(|m| m.participants)
-            .unwrap_or_default())
+        tx.commit()?;
+        Ok(next)
     }
 
+    /// User edit: replaces the list and marks it as the user's.
     pub fn set_participants(
         &self,
         meeting_id: i64,
@@ -424,10 +512,86 @@ impl MeetingsStore {
     ) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
-            "UPDATE meetings SET participants_json = ?1 WHERE id = ?2",
-            params![serde_json::to_string(participants)?, meeting_id],
+            "UPDATE meetings SET participants_json = ?1, participants_source = ?2 WHERE id = ?3",
+            params![
+                serde_json::to_string(participants)?,
+                PARTICIPANTS_SOURCE_USER,
+                meeting_id
+            ],
         )?;
         Ok(())
+    }
+
+    pub fn set_sync_state(&self, meeting_id: i64, state: &str) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE meetings SET sync_state = ?1 WHERE id = ?2",
+            params![state, meeting_id],
+        )?;
+        Ok(())
+    }
+
+    /// Count an upload attempt; returns the attempt number.
+    pub fn mark_sync_attempt(&self, meeting_id: i64, at: i64) -> Result<u32> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE meetings SET sync_attempts = COALESCE(sync_attempts, 0) + 1,
+                 last_sync_attempt_at = ?1
+             WHERE id = ?2",
+            params![at, meeting_id],
+        )?;
+        let attempts: i64 = conn.query_row(
+            "SELECT COALESCE(sync_attempts, 0) FROM meetings WHERE id = ?1",
+            params![meeting_id],
+            |row| row.get(0),
+        )?;
+        Ok(attempts.max(0) as u32)
+    }
+
+    /// Finished meetings whose upload is pending or failed, oldest first.
+    pub fn sync_candidates(&self) -> Result<Vec<SyncCandidate>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, COALESCE(sync_attempts, 0), last_sync_attempt_at FROM meetings
+             WHERE sync_state IN (?1, ?2) AND ended_at IS NOT NULL
+             ORDER BY started_at ASC",
+        )?;
+        let rows = stmt.query_map(params![SYNC_PENDING, SYNC_FAILED], |row| {
+            Ok(SyncCandidate {
+                id: row.get(0)?,
+                attempts: row.get::<_, i64>(1)?.max(0) as u32,
+                last_attempt_at: row.get(2)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Diagnostics captured when the meeting was recorded, re-sent with
+    /// every later upload of it.
+    pub fn set_client_diagnostics(
+        &self,
+        meeting_id: i64,
+        diagnostics: &serde_json::Value,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE meetings SET client_diagnostics_json = ?1 WHERE id = ?2",
+            params![serde_json::to_string(diagnostics)?, meeting_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn client_diagnostics(&self, meeting_id: i64) -> Result<Option<serde_json::Value>> {
+        let conn = self.conn()?;
+        let json: Option<String> = conn
+            .query_row(
+                "SELECT client_diagnostics_json FROM meetings WHERE id = ?1",
+                params![meeting_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(json.and_then(|j| serde_json::from_str(&j).ok()))
     }
 
     pub fn rename(&self, meeting_id: i64, title: &str) -> Result<()> {
@@ -496,9 +660,14 @@ struct ActiveMeeting {
     id: i64,
     started: Instant,
     stop_flag: Arc<AtomicBool>,
-    /// One thread per capture source (mic, optionally system audio).
+    /// One thread per capture source (mic, optionally system audio), plus
+    /// the output-device probe.
     handles: Vec<JoinHandle<()>>,
+    /// The calendar lookup started with the recording, joined before the
+    /// stop-time lookup so the two can't race.
+    calendar_handle: Option<JoinHandle<()>>,
     stats: MeetingStats,
+    diag: MeetingDiag,
 }
 
 /// What happened to each captured chunk of one source, sent to the backend as
@@ -513,6 +682,23 @@ pub struct SourceStats {
     pub transcribed: u32,
     pub empty_text: u32,
     pub failed: u32,
+    /// How pauses are found: "vad", or "energy" when the VAD couldn't be
+    /// loaded or kept failing (see `vad_degraded`).
+    pub chunking: String,
+    pub vad_errors: u32,
+    pub vad_degraded: bool,
+    /// Chunks cut in a pause vs. forced (no pause before the maximum length).
+    pub silence_cuts: u32,
+    pub forced_cuts: u32,
+    /// Chunks ended early by a long hole in the source's audio.
+    pub gap_cuts: u32,
+    /// Collecting samples from the capture backend failed.
+    pub drain_errors: u32,
+    /// Holes in the source's audio (no samples delivered for > 1 s) and
+    /// their total length; `padded_ms` of them were filled with silence.
+    pub gaps: u32,
+    pub gap_ms: u64,
+    pub padded_ms: u64,
 }
 
 type MeetingStats = Arc<Mutex<BTreeMap<String, SourceStats>>>;
@@ -523,10 +709,103 @@ fn record_stat(stats: &MeetingStats, source: &str, update: impl FnOnce(&mut Sour
     }
 }
 
+/// Recording-wide diagnostics (calendar lookup, capture backend, output
+/// device), merged into `client_diagnostics` on stop.
+#[derive(Debug, Default)]
+struct MeetingDiagnostics {
+    fields: serde_json::Map<String, serde_json::Value>,
+    /// How often each output-device kind was seen while recording.
+    output_kinds: BTreeMap<String, u32>,
+    /// Event matched when the recording started (not sent; only used to
+    /// tell whether the stop-time lookup agreed).
+    start_event_id: Option<String>,
+}
+
+type MeetingDiag = Arc<Mutex<MeetingDiagnostics>>;
+
+fn set_diag(diag: &MeetingDiag, key: &str, value: serde_json::Value) {
+    if let Ok(mut d) = diag.lock() {
+        d.fields.insert(key.to_string(), value);
+    }
+}
+
+/// Tracks work that must not be cut by a relaunch (finalizing and uploading
+/// stopped meetings) and which meetings are being uploaded right now.
+#[derive(Default)]
+pub struct SyncTracker {
+    busy: AtomicUsize,
+    in_flight: Mutex<HashSet<i64>>,
+}
+
+/// Held while background meeting work runs; see [`MeetingManager::is_busy`].
+pub struct BusyGuard(Arc<SyncTracker>);
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.0.busy.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Exclusive right to upload one meeting.
+pub struct UploadClaim {
+    tracker: Arc<SyncTracker>,
+    meeting_id: i64,
+}
+
+impl Drop for UploadClaim {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.tracker.in_flight.lock() {
+            set.remove(&self.meeting_id);
+        }
+    }
+}
+
+impl SyncTracker {
+    pub fn busy_guard(self: &Arc<Self>) -> BusyGuard {
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        BusyGuard(self.clone())
+    }
+
+    /// `None` while the meeting is already being uploaded.
+    pub fn claim(self: &Arc<Self>, meeting_id: i64) -> Option<UploadClaim> {
+        let mut set = self.in_flight.lock().ok()?;
+        set.insert(meeting_id).then(|| UploadClaim {
+            tracker: self.clone(),
+            meeting_id,
+        })
+    }
+
+    fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::SeqCst) > 0
+    }
+}
+
+/// Why a meeting is being uploaded (sent as `upload_kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadKind {
+    /// Right after the recording stopped.
+    AfterStop,
+    /// The background retry of a pending/failed upload.
+    AutoRetry,
+    /// "Sync to cloud" in the UI: the backend extracts tasks again.
+    Manual,
+}
+
+impl UploadKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            UploadKind::AfterStop => "after_stop",
+            UploadKind::AutoRetry => "auto_retry",
+            UploadKind::Manual => "manual",
+        }
+    }
+}
+
 pub struct MeetingManager {
     app: AppHandle,
     store: Arc<MeetingsStore>,
     active: Arc<Mutex<Option<ActiveMeeting>>>,
+    sync: Arc<SyncTracker>,
 }
 
 impl MeetingManager {
@@ -535,6 +814,7 @@ impl MeetingManager {
             app: app.clone(),
             store: Arc::new(MeetingsStore::new(app)?),
             active: Arc::new(Mutex::new(None)),
+            sync: Arc::default(),
         })
     }
 
@@ -542,8 +822,19 @@ impl MeetingManager {
         self.store.clone()
     }
 
+    pub fn sync_tracker(&self) -> Arc<SyncTracker> {
+        self.sync.clone()
+    }
+
     pub fn active_meeting_id(&self) -> Option<i64> {
         self.active.lock().unwrap().as_ref().map(|a| a.id)
+    }
+
+    /// True while a meeting records or a stopped one is still being
+    /// finalized, transcribed, matched to the calendar or uploaded.
+    /// Relaunching (e.g. a mandatory update) would lose that work.
+    pub fn is_busy(&self) -> bool {
+        self.active_meeting_id().is_some() || self.sync.is_busy()
     }
 
     /// Start a new meeting. Returns the meeting_id.
@@ -556,7 +847,13 @@ impl MeetingManager {
         let settings = get_settings(&self.app);
         let started_at = Utc::now().timestamp();
         let title = title.unwrap_or_else(|| default_title(started_at));
-        let id = self.store.insert(&title, started_at, is_daily)?;
+        let will_sync = cloud_sync_configured(&settings);
+        let id = self.store.insert(
+            &title,
+            started_at,
+            is_daily,
+            will_sync.then_some(SYNC_PENDING),
+        )?;
 
         // Make sure the transcription engine is hot before we start capturing.
         // Skip preloading when cloud transcription is the primary mode — the
@@ -594,6 +891,7 @@ impl MeetingManager {
 
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stats: MeetingStats = Arc::default();
+        let diag: MeetingDiag = Arc::default();
         let mut handles = Vec::new();
         // One clock for both sources: chunk offsets of mic and system audio
         // must be comparable, or the dialog view interleaves them wrongly.
@@ -623,6 +921,12 @@ impl MeetingManager {
             match resolve_system_audio_device() {
                 SystemAudioStatus::Available { source, label } => {
                     info!("Meeting {id}: capturing system audio via '{label}'");
+                    let backend = match &source {
+                        SystemAudioSource::CpalDevice(_) => "cpal",
+                        SystemAudioSource::WasapiLoopback => "wasapi",
+                        SystemAudioSource::MacosNative => "macos_native",
+                    };
+                    set_diag(&diag, "system_capture_backend", serde_json::json!(backend));
                     let capture_result: Result<SourceCapture> = match source {
                         SystemAudioSource::CpalDevice(dev) => open_cpal(Some(dev)),
                         #[cfg(target_os = "windows")]
@@ -655,6 +959,14 @@ impl MeetingManager {
                         }
                         Err(e) => {
                             warn!("Meeting {id}: failed to open system-audio capture — {e}");
+                            set_diag(
+                                &diag,
+                                "system_capture_error",
+                                serde_json::json!(crate::cloud_sync::truncate_chars(
+                                    &e.to_string(),
+                                    300
+                                )),
+                            );
                             let _ = (MeetingStateEvent::Error {
                                 meeting_id: Some(id),
                                 message: format!("System audio capture failed: {e}"),
@@ -667,6 +979,11 @@ impl MeetingManager {
                     warn!(
                         "Meeting {id}: system-audio requested but not configured — {install_hint}"
                     );
+                    set_diag(
+                        &diag,
+                        "system_capture_backend",
+                        serde_json::json!("not_configured"),
+                    );
                     let _ = (MeetingStateEvent::Error {
                         meeting_id: Some(id),
                         message: format!("System audio is enabled but not set up: {install_hint}"),
@@ -675,6 +992,11 @@ impl MeetingManager {
                 }
                 SystemAudioStatus::NotYetSupported { message } => {
                     warn!("Meeting {id}: system-audio not supported — {message}");
+                    set_diag(
+                        &diag,
+                        "system_capture_backend",
+                        serde_json::json!("not_supported"),
+                    );
                     let _ = (MeetingStateEvent::Error {
                         meeting_id: Some(id),
                         message,
@@ -682,14 +1004,51 @@ impl MeetingManager {
                     .emit(&self.app);
                 }
             }
+        } else {
+            set_diag(
+                &diag,
+                "system_capture_backend",
+                serde_json::json!("disabled"),
+            );
         }
+
+        if let Some(h) = spawn_output_probe(id, stop_flag.clone(), diag.clone()) {
+            handles.push(h);
+        }
+
+        // Look up the calendar event this recording belongs to. Off-thread
+        // and best-effort: a slow or missing calendar never delays capture.
+        let calendar_handle = if will_sync {
+            let app = self.app.clone();
+            let store = self.store.clone();
+            let diag = diag.clone();
+            let now = Utc::now();
+            let spawned = thread::Builder::new()
+                .name(format!("meeting-{id}-calendar"))
+                .spawn(move || {
+                    let lookup =
+                        detect_calendar_context(&app, &store, id, LookupWhen::Start, now, now);
+                    lookup.record(&diag, LookupWhen::Start);
+                });
+            match spawned {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    warn!("Meeting {id}: could not start calendar lookup: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         *slot = Some(ActiveMeeting {
             id,
             started: Instant::now(),
             stop_flag,
             handles,
+            calendar_handle,
             stats,
+            diag,
         });
 
         let _ = (MeetingStateEvent::Started {
@@ -697,24 +1056,6 @@ impl MeetingManager {
             title,
         })
         .emit(&self.app);
-
-        // Look up the calendar event this recording belongs to. Off-thread
-        // and best-effort: a slow or missing calendar never delays capture.
-        if cloud_sync_configured(&settings) {
-            let app = self.app.clone();
-            let store = self.store.clone();
-            let window_start = Utc::now();
-            let spawned = thread::Builder::new()
-                .name(format!("meeting-{id}-calendar"))
-                .spawn(move || {
-                    // Recording just started: weigh the next half hour.
-                    let window_end = window_start + chrono::Duration::minutes(30);
-                    detect_calendar_context(&app, &store, id, window_start, window_end);
-                });
-            if let Err(e) = spawned {
-                warn!("Meeting {id}: could not start calendar lookup: {e}");
-            }
-        }
 
         Ok(id)
     }
@@ -742,6 +1083,11 @@ impl MeetingManager {
 
         let meeting_id = active.id;
 
+        // Busy from before the slot is released until the upload is done, so
+        // `is_busy` never reports a gap a relaunch could slip into.
+        let busy = self.sync.busy_guard();
+        let claim = self.sync.claim(meeting_id);
+
         // Signal recording threads to exit as soon as possible.
         active.stop_flag.store(true, Ordering::SeqCst);
         drop(slot);
@@ -756,10 +1102,18 @@ impl MeetingManager {
         let store = self.store.clone();
         let app = self.app.clone();
         thread::spawn(move || {
-            let active_stats = active.stats.clone();
+            let _busy = busy;
+            let _claim = claim;
+            let ActiveMeeting {
+                handles,
+                calendar_handle,
+                stats,
+                diag,
+                ..
+            } = active;
             // Wait for recording threads to finish (may block briefly if
             // a transcription was already in flight when stop was signalled).
-            for h in active.handles {
+            for h in handles {
                 let _ = h.join();
             }
 
@@ -783,87 +1137,300 @@ impl MeetingManager {
 
             let _ = (MeetingStateEvent::Stopped { meeting_id }).emit(&app);
 
-            // Auto-sync to Lezat Scheduling backend if enabled.
-            if cloud_sync_configured(&settings) {
-                // The start-time lookup found nothing (calendar slow, or
-                // recording started early): retry with the real window.
-                if let Ok(Some(r)) = store.get(meeting_id) {
-                    if r.calendar_event_id.is_none() && r.participants.is_empty() {
-                        if let (Some(start), Some(end)) = (
-                            DateTime::from_timestamp(r.started_at, 0),
-                            DateTime::from_timestamp(ended_at, 0),
-                        ) {
-                            detect_calendar_context(&app, &store, meeting_id, start, end);
-                        }
+            if !cloud_sync_configured(&settings) {
+                return;
+            }
+
+            // The start-time lookup only knew when the recording began; now
+            // the real window is known, so match again unless the user has
+            // already confirmed the attendees.
+            if let Some(h) = calendar_handle {
+                let _ = h.join();
+            }
+            match store.get(meeting_id) {
+                Ok(Some(r))
+                    if r.participants_source.as_deref() == Some(PARTICIPANTS_SOURCE_USER) =>
+                {
+                    set_diag(
+                        &diag,
+                        "calendar_lookup_stop",
+                        serde_json::json!("skipped_user_edited"),
+                    );
+                }
+                Ok(Some(r)) => {
+                    if let (Some(start), Some(end)) = (
+                        DateTime::from_timestamp(r.started_at, 0),
+                        DateTime::from_timestamp(ended_at, 0),
+                    ) {
+                        detect_calendar_context(
+                            &app,
+                            &store,
+                            meeting_id,
+                            LookupWhen::Stop,
+                            start,
+                            end,
+                        )
+                        .record(&diag, LookupWhen::Stop);
                     }
                 }
+                Ok(None) => {}
+                Err(e) => warn!("Failed to load meeting {meeting_id} for calendar lookup: {e}"),
+            }
 
-                let record = match store.get(meeting_id) {
-                    Ok(Some(r)) => r,
-                    Ok(None) => {
-                        warn!("Meeting {meeting_id} not found for cloud sync");
-                        return;
-                    }
-                    Err(e) => {
-                        warn!("Failed to load meeting {meeting_id} for cloud sync: {e}");
-                        return;
-                    }
-                };
-
-                use crate::cloud_sync;
-                let _ = (cloud_sync::CloudSyncEvent::Syncing { meeting_id }).emit(&app);
-
-                let diagnostics = serde_json::json!({
-                    "app_version": env!("CARGO_PKG_VERSION"),
-                    "os": std::env::consts::OS,
-                    "transcription_mode": format!("{:?}", settings.transcription_mode).to_lowercase(),
-                    "capture_system_audio": settings.capture_system_audio,
-                    "sources": active_stats.lock().map(|m| m.clone()).unwrap_or_default(),
-                    "chunking": "vad",
-                    "output_device_kind": output_device_hint().kind,
-                    "calendar_matched": record.calendar_event_id.is_some(),
-                    "participants": record.participants.len(),
-                });
-                match cloud_sync::sync_meeting_to_cloud_with_diagnostics(
-                    &settings,
-                    &record,
-                    Some(diagnostics),
-                ) {
-                    Ok(resp) => {
-                        info!(
-                            "Meeting {} synced to cloud: {}",
-                            meeting_id, resp.stored_record_id
-                        );
-
-                        if let Some(ref title) = resp.suggested_title {
-                            if let Some(mgr) = app.try_state::<Arc<MeetingManager>>() {
-                                if let Err(e) = mgr.store().rename(meeting_id, title) {
-                                    warn!("Failed to apply suggested title: {e}");
-                                } else {
-                                    info!("Meeting {meeting_id} renamed to: {title}");
-                                }
-                            }
-                        }
-
-                        let _ = (cloud_sync::CloudSyncEvent::Success {
-                            meeting_id,
-                            remote_id: resp.stored_record_id,
-                        })
-                        .emit(&app);
-                    }
-                    Err(e) => {
-                        warn!("Cloud sync failed for meeting {}: {}", meeting_id, e);
-                        let _ = (cloud_sync::CloudSyncEvent::Failed {
-                            meeting_id,
-                            error: e.to_string(),
-                        })
-                        .emit(&app);
-                    }
-                }
+            let diagnostics = build_diagnostics(&settings, &stats, &diag);
+            if let Err(e) = store.set_client_diagnostics(meeting_id, &diagnostics) {
+                warn!("Meeting {meeting_id}: failed to store diagnostics: {e}");
+            }
+            if let Err(e) = run_upload(&app, &store, meeting_id, UploadKind::AfterStop) {
+                warn!("Cloud sync failed for meeting {meeting_id}: {e}");
             }
         });
 
         Ok(meeting_id)
+    }
+
+    /// Retry pending/failed uploads in the background: shortly after start-up
+    /// and then periodically, each meeting with exponential backoff.
+    pub fn spawn_sync_retry_worker(&self) {
+        let app = self.app.clone();
+        let store = self.store.clone();
+        let sync = self.sync.clone();
+        let spawned = thread::Builder::new()
+            .name("meeting-sync-retry".into())
+            .spawn(move || {
+                thread::sleep(RETRY_FIRST_CHECK);
+                loop {
+                    retry_due_uploads(&app, &store, &sync);
+                    thread::sleep(RETRY_CHECK_INTERVAL);
+                }
+            });
+        if let Err(e) = spawned {
+            warn!("Could not start the meeting upload retry worker: {e}");
+        }
+    }
+}
+
+/// Seconds to wait after `attempts` failed uploads before the next one.
+fn retry_backoff_secs(attempts: u32) -> i64 {
+    if attempts == 0 {
+        return 0;
+    }
+    let factor = 1i64 << (attempts - 1).min(10);
+    (RETRY_BASE_SECS * factor).min(RETRY_MAX_SECS)
+}
+
+fn retry_due_uploads(app: &AppHandle, store: &Arc<MeetingsStore>, sync: &Arc<SyncTracker>) {
+    let settings = get_settings(app);
+    if !cloud_sync_configured(&settings) {
+        return;
+    }
+    let candidates = match store.sync_candidates() {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Upload retry: listing meetings failed: {e}");
+            return;
+        }
+    };
+    let now = Utc::now().timestamp();
+    for c in candidates {
+        if c.attempts >= RETRY_MAX_ATTEMPTS {
+            continue;
+        }
+        let due_at = c.last_attempt_at.unwrap_or(0) + retry_backoff_secs(c.attempts);
+        if now < due_at {
+            continue;
+        }
+        // Skips meetings being uploaded right now (e.g. just stopped).
+        let Some(_claim) = sync.claim(c.id) else {
+            continue;
+        };
+        let _busy = sync.busy_guard();
+        info!(
+            "Retrying upload of meeting {} (attempt {})",
+            c.id,
+            c.attempts + 1
+        );
+        if let Err(e) = run_upload(app, store, c.id, UploadKind::AutoRetry) {
+            warn!("Upload retry of meeting {} failed: {e}", c.id);
+        }
+    }
+}
+
+/// Upload one meeting with its stored diagnostics and record the outcome
+/// (`sync_state`, events for the UI). The caller holds the meeting's
+/// [`UploadClaim`] and a [`BusyGuard`].
+pub fn run_upload(
+    app: &AppHandle,
+    store: &MeetingsStore,
+    meeting_id: i64,
+    kind: UploadKind,
+) -> Result<()> {
+    use crate::cloud_sync;
+
+    let settings = get_settings(app);
+    let record = store
+        .get(meeting_id)?
+        .ok_or_else(|| anyhow!("Meeting {meeting_id} not found"))?;
+
+    let _ = (cloud_sync::CloudSyncEvent::Syncing { meeting_id }).emit(app);
+    let attempt = store
+        .mark_sync_attempt(meeting_id, Utc::now().timestamp())
+        .unwrap_or_else(|e| {
+            warn!("Meeting {meeting_id}: failed to count upload attempt: {e}");
+            0
+        });
+
+    let mut diagnostics = store
+        .client_diagnostics(meeting_id)
+        .ok()
+        .flatten()
+        .filter(|d| d.is_object())
+        .unwrap_or_else(|| base_diagnostics(&settings));
+    if let Some(obj) = diagnostics.as_object_mut() {
+        obj.insert("upload_kind".into(), serde_json::json!(kind.as_str()));
+        obj.insert("sync_attempt".into(), serde_json::json!(attempt));
+        obj.insert(
+            "uploading_app_version".into(),
+            serde_json::json!(env!("CARGO_PKG_VERSION")),
+        );
+        // The attendees may have been edited since the recording.
+        obj.insert(
+            "participants".into(),
+            serde_json::json!(record.participants.len()),
+        );
+        obj.insert(
+            "participants_source".into(),
+            serde_json::json!(record.participants_source),
+        );
+        obj.insert(
+            "calendar_matched".into(),
+            serde_json::json!(record.calendar_event_id.is_some()),
+        );
+    }
+
+    match cloud_sync::sync_meeting(
+        &settings,
+        &record,
+        kind == UploadKind::Manual,
+        Some(diagnostics),
+    ) {
+        Ok(outcome) => {
+            let resp = outcome.response;
+            info!(
+                "Meeting {meeting_id} synced to cloud ({}): {}",
+                kind.as_str(),
+                resp.stored_record_id
+            );
+            if let Some(ref title) = resp.suggested_title {
+                match store.rename(meeting_id, title) {
+                    Ok(()) => info!("Meeting {meeting_id} renamed to: {title}"),
+                    Err(e) => warn!("Failed to apply suggested title: {e}"),
+                }
+            }
+            if let Err(e) = store.set_sync_state(meeting_id, SYNC_SYNCED) {
+                warn!("Meeting {meeting_id}: failed to store sync state: {e}");
+            }
+            let _ = (cloud_sync::CloudSyncEvent::Success {
+                meeting_id,
+                remote_id: resp.stored_record_id,
+            })
+            .emit(app);
+            if outcome.calendar_context_dropped.is_some() {
+                let _ = (cloud_sync::CloudSyncEvent::Warning {
+                    meeting_id,
+                    code: "calendar_context_dropped".to_string(),
+                })
+                .emit(app);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if let Err(db) = store.set_sync_state(meeting_id, SYNC_FAILED) {
+                warn!("Meeting {meeting_id}: failed to store sync state: {db}");
+            }
+            let _ = (cloud_sync::CloudSyncEvent::Failed {
+                meeting_id,
+                error: e.to_string(),
+            })
+            .emit(app);
+            Err(e)
+        }
+    }
+}
+
+/// Diagnostics that don't depend on a recording (also the fallback for
+/// meetings recorded before diagnostics were stored).
+fn base_diagnostics(settings: &crate::settings::AppSettings) -> serde_json::Value {
+    serde_json::json!({
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "transcription_mode": format!("{:?}", settings.transcription_mode).to_lowercase(),
+        "capture_system_audio": settings.capture_system_audio,
+    })
+}
+
+/// Content-free diagnostics of a finished recording.
+fn build_diagnostics(
+    settings: &crate::settings::AppSettings,
+    stats: &MeetingStats,
+    diag: &MeetingDiag,
+) -> serde_json::Value {
+    let sources = stats.lock().map(|m| m.clone()).unwrap_or_default();
+    let modes: HashSet<&str> = sources.values().map(|s| s.chunking.as_str()).collect();
+    let chunking = match modes.len() {
+        0 => "none".to_string(),
+        1 => modes.into_iter().next().unwrap_or_default().to_string(),
+        _ => "mixed".to_string(),
+    };
+    let mut out = base_diagnostics(settings);
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("sources".into(), serde_json::json!(sources));
+        obj.insert("chunking".into(), serde_json::json!(chunking));
+        obj.insert(
+            "output_device_kind".into(),
+            serde_json::json!(output_device_hint().kind),
+        );
+        if let Ok(d) = diag.lock() {
+            obj.insert(
+                "output_device_kind_samples".into(),
+                serde_json::json!(d.output_kinds),
+            );
+            for (k, v) in &d.fields {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Sample the default output device kind every minute while recording, so
+/// diagnostics show whether the call played through speakers.
+fn spawn_output_probe(
+    meeting_id: i64,
+    stop_flag: Arc<AtomicBool>,
+    diag: MeetingDiag,
+) -> Option<JoinHandle<()>> {
+    let spawned = thread::Builder::new()
+        .name(format!("meeting-{meeting_id}-output-probe"))
+        .spawn(move || loop {
+            let kind = output_device_hint().kind;
+            if let Ok(mut d) = diag.lock() {
+                *d.output_kinds.entry(kind).or_insert(0) += 1;
+            }
+            let deadline = Instant::now() + OUTPUT_PROBE_INTERVAL;
+            while Instant::now() < deadline {
+                if stop_flag.load(Ordering::SeqCst) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(250));
+            }
+        });
+    match spawned {
+        Ok(h) => Some(h),
+        Err(e) => {
+            warn!("Meeting {meeting_id}: could not start output-device probe: {e}");
+            None
+        }
     }
 }
 
@@ -902,6 +1469,122 @@ fn clean_participants(participants: Vec<MeetingParticipant>) -> Vec<MeetingParti
     out
 }
 
+/// The participants (and their source) after a calendar match:
+/// * nobody set them, or the calendar did → the event's attendees;
+/// * the user added people → theirs plus the event's (deduplicated);
+/// * the user removed everyone → stays empty.
+fn merge_calendar_participants(
+    current: &[MeetingParticipant],
+    source: Option<&str>,
+    detected: &[MeetingParticipant],
+) -> (Vec<MeetingParticipant>, Option<String>) {
+    if source == Some(PARTICIPANTS_SOURCE_USER) {
+        if current.is_empty() {
+            return (Vec::new(), Some(PARTICIPANTS_SOURCE_USER.to_string()));
+        }
+        let merged = clean_participants(current.iter().chain(detected).cloned().collect());
+        return (merged, Some(PARTICIPANTS_SOURCE_USER.to_string()));
+    }
+    (
+        clean_participants(detected.to_vec()),
+        Some(PARTICIPANTS_SOURCE_CALENDAR.to_string()),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LookupWhen {
+    /// Recording just started: the event in progress.
+    Start,
+    /// Recording ended: the event overlapping it the most.
+    Stop,
+}
+
+/// Outcome of one calendar lookup, for diagnostics.
+#[derive(Debug, Default)]
+struct CalendarLookup {
+    /// "not_connected" | "failed" | "no_overlap" | "matched"
+    result: &'static str,
+    event_id: Option<String>,
+    event_start: Option<String>,
+    candidates: usize,
+}
+
+impl CalendarLookup {
+    fn record(&self, diag: &MeetingDiag, when: LookupWhen) {
+        let Ok(mut d) = diag.lock() else {
+            return;
+        };
+        let suffix = match when {
+            LookupWhen::Start => "start",
+            LookupWhen::Stop => "stop",
+        };
+        d.fields.insert(
+            format!("calendar_lookup_{suffix}"),
+            serde_json::json!(self.result),
+        );
+        d.fields.insert(
+            format!("calendar_candidates_{suffix}"),
+            serde_json::json!(self.candidates),
+        );
+        // Overall result: the stop lookup wins when it matched a different
+        // event; otherwise the first match stands.
+        if self.result == "matched" {
+            let overall = match when {
+                LookupWhen::Start => {
+                    d.start_event_id = self.event_id.clone();
+                    "matched_at_start"
+                }
+                LookupWhen::Stop if d.start_event_id == self.event_id => "matched_at_start",
+                LookupWhen::Stop => "matched_at_stop",
+            };
+            d.fields
+                .insert("calendar_lookup".into(), serde_json::json!(overall));
+            d.fields.insert(
+                "calendar_event_start".into(),
+                serde_json::json!(self.event_start),
+            );
+            d.fields.insert(
+                "calendar_candidates".into(),
+                serde_json::json!(self.candidates),
+            );
+        } else if !d
+            .fields
+            .get("calendar_lookup")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.starts_with("matched"))
+        {
+            d.fields
+                .insert("calendar_lookup".into(), serde_json::json!(self.result));
+            d.fields.insert(
+                "calendar_candidates".into(),
+                serde_json::json!(self.candidates),
+            );
+        }
+    }
+}
+
+/// Whether a calendar is connected: the backend's answer, else inferred from
+/// the events, else from the integrations list. `None` = unknown.
+fn calendar_connected(
+    settings: &crate::settings::AppSettings,
+    reported: Option<bool>,
+    candidates: usize,
+) -> Option<bool> {
+    if reported.is_some() {
+        return reported;
+    }
+    if candidates > 0 {
+        return Some(true);
+    }
+    crate::cloud_sync::fetch_integrations_status(settings)
+        .ok()
+        .map(|s| {
+            s.integrations
+                .iter()
+                .any(|i| i.connected && i.provider.contains("calendar"))
+        })
+}
+
 /// Match the recording to a calendar event and store its attendees. Never
 /// fails the meeting: errors are logged and the meeting keeps whatever
 /// participants it has.
@@ -909,34 +1592,51 @@ fn detect_calendar_context(
     app: &AppHandle,
     store: &MeetingsStore,
     meeting_id: i64,
+    when: LookupWhen,
     rec_start: DateTime<Utc>,
     rec_end: DateTime<Utc>,
-) {
+) -> CalendarLookup {
     let settings = get_settings(app);
     let margin = chrono::Duration::minutes(30);
-    let events = match crate::cloud_sync::fetch_calendar_events(
+    let fetched = match crate::cloud_sync::fetch_calendar_events(
         &settings,
         rec_start - margin,
         rec_end + margin,
     ) {
-        Ok(events) => events,
+        Ok(fetched) => fetched,
         Err(e) => {
             warn!("Meeting {meeting_id}: calendar lookup failed: {e}");
-            return;
+            return CalendarLookup {
+                result: "failed",
+                ..Default::default()
+            };
         }
     };
-    let Some(event) = crate::cloud_sync::pick_best_event(&events, rec_start, rec_end) else {
-        info!(
-            "Meeting {meeting_id}: no calendar event overlaps the recording ({} candidates)",
-            events.len()
-        );
-        return;
+    let candidates = fetched.events.len();
+    let picked = match when {
+        LookupWhen::Start => crate::cloud_sync::pick_event_at_start(&fetched.events, rec_start),
+        LookupWhen::Stop => crate::cloud_sync::pick_best_event(&fetched.events, rec_start, rec_end),
+    };
+    let Some(event) = picked else {
+        let result = if calendar_connected(&settings, fetched.calendar_connected, candidates)
+            == Some(false)
+        {
+            "not_connected"
+        } else {
+            "no_overlap"
+        };
+        info!("Meeting {meeting_id}: no calendar event for the recording ({result}, {candidates} candidates)");
+        return CalendarLookup {
+            result,
+            candidates,
+            ..Default::default()
+        };
     };
     let detected = clean_participants(event.participants());
     match store.set_calendar_context(meeting_id, &event.id, event.title.as_deref(), &detected) {
         Ok(participants) => {
             info!(
-                "Meeting {meeting_id}: matched calendar event with {} attendee(s)",
+                "Meeting {meeting_id}: matched calendar event with {} attendee(s) ({when:?})",
                 detected.len()
             );
             let _ = (MeetingCalendarContextEvent {
@@ -948,6 +1648,12 @@ fn detect_calendar_context(
             .emit(app);
         }
         Err(e) => warn!("Meeting {meeting_id}: failed to store calendar context: {e}"),
+    }
+    CalendarLookup {
+        result: "matched",
+        event_id: Some(event.id.clone()),
+        event_start: event.start.clone(),
+        candidates,
     }
 }
 
@@ -1113,8 +1819,19 @@ fn load_vad(app: &AppHandle) -> Option<SileroVad> {
     }
 }
 
+/// Why a chunk ended where it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CutKind {
+    /// In a pause after the minimum length.
+    Silence,
+    /// No pause before the maximum: at the last non-speech frame, or hard.
+    Forced,
+    /// No speech flags at all: fixed-length chunks.
+    Fixed,
+}
+
 /// Where to end the next chunk, in samples, given the per-frame speech flags
-/// of the pending audio (`None` = no VAD) and how many samples are pending.
+/// of the pending audio (`None` = no flags) and how many samples are pending.
 ///
 /// * once `CHUNK_MIN_SECONDS` are pending, cut in the middle of the first
 ///   pause of `CUT_SILENCE_FRAMES` that ends after that point;
@@ -1122,11 +1839,11 @@ fn load_vad(app: &AppHandle) -> Option<SileroVad> {
 ///   frame past the minimum, or hard-cut at the maximum.
 ///
 /// Chunks never overlap: the remainder starts the next chunk.
-fn find_chunk_cut(speech: Option<&[bool]>, pending_samples: usize) -> Option<usize> {
+fn find_chunk_cut(speech: Option<&[bool]>, pending_samples: usize) -> Option<(usize, CutKind)> {
     let min_samples = CHUNK_MIN_SECONDS * SAMPLE_RATE;
     let max_samples = CHUNK_MAX_SECONDS * SAMPLE_RATE;
     let Some(flags) = speech else {
-        return (pending_samples >= min_samples).then_some(min_samples);
+        return (pending_samples >= min_samples).then_some((min_samples, CutKind::Fixed));
     };
 
     let min_frame = min_samples / VAD_FRAME_SAMPLES;
@@ -1136,7 +1853,7 @@ fn find_chunk_cut(speech: Option<&[bool]>, pending_samples: usize) -> Option<usi
         silent_run = if is_speech { 0 } else { silent_run + 1 };
         if i + 1 >= min_frame && silent_run >= CUT_SILENCE_FRAMES {
             let cut_frame = i + 1 - silent_run / 2;
-            return Some(cut_frame * VAD_FRAME_SAMPLES);
+            return Some((cut_frame * VAD_FRAME_SAMPLES, CutKind::Silence));
         }
     }
 
@@ -1152,7 +1869,115 @@ fn find_chunk_cut(speech: Option<&[bool]>, pending_samples: usize) -> Option<usi
         .find(|(_, &is_speech)| !is_speech)
         .map(|(i, _)| (i + 1) * VAD_FRAME_SAMPLES);
     // Frame-aligned, so the remaining flags still line up with the samples.
-    Some(fallback.unwrap_or(max_frame * VAD_FRAME_SAMPLES))
+    Some((
+        fallback.unwrap_or(max_frame * VAD_FRAME_SAMPLES),
+        CutKind::Forced,
+    ))
+}
+
+/// Energy check used when the VAD is unavailable or keeps failing.
+fn energy_is_speech(frame: &[f32]) -> bool {
+    if frame.is_empty() {
+        return false;
+    }
+    let mean_square = frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32;
+    mean_square.sqrt() > ENERGY_SPEECH_RMS
+}
+
+/// Per-frame speech detection for one source.
+enum SpeechClassifier {
+    Vad {
+        detector: Box<SileroVad>,
+        consecutive_errors: u32,
+    },
+    Energy,
+}
+
+/// One frame's classification.
+struct FrameClass {
+    speech: bool,
+    vad_error: bool,
+    /// The VAD was given up on with this frame.
+    degraded: bool,
+}
+
+impl SpeechClassifier {
+    fn mode(&self) -> &'static str {
+        match self {
+            SpeechClassifier::Vad { .. } => "vad",
+            SpeechClassifier::Energy => "energy",
+        }
+    }
+
+    /// A VAD error falls back to the energy check for that frame (treating
+    /// it as speech made every chunk "speech" and defeated silence gating);
+    /// after `VAD_MAX_CONSECUTIVE_ERRORS` in a row the VAD is dropped.
+    fn classify(&mut self, frame: &[f32]) -> FrameClass {
+        let SpeechClassifier::Vad {
+            detector,
+            consecutive_errors,
+        } = self
+        else {
+            return FrameClass {
+                speech: energy_is_speech(frame),
+                vad_error: false,
+                degraded: false,
+            };
+        };
+        match detector.is_voice(frame) {
+            Ok(speech) => {
+                *consecutive_errors = 0;
+                FrameClass {
+                    speech,
+                    vad_error: false,
+                    degraded: false,
+                }
+            }
+            Err(e) => {
+                *consecutive_errors += 1;
+                let degraded = *consecutive_errors >= VAD_MAX_CONSECUTIVE_ERRORS;
+                if *consecutive_errors == 1 || degraded {
+                    warn!("VAD failed on a frame ({consecutive_errors} in a row): {e}");
+                }
+                if degraded {
+                    *self = SpeechClassifier::Energy;
+                }
+                FrameClass {
+                    speech: energy_is_speech(frame),
+                    vad_error: true,
+                    degraded,
+                }
+            }
+        }
+    }
+}
+
+/// What to do with audio that arrives after a hole in a source's timeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GapAction {
+    /// Contiguous (within tolerance), or nothing pending to misplace.
+    None,
+    /// Fill this many ms of silence before the new samples.
+    Pad(u64),
+    /// Too long to fill: end the pending chunk first.
+    Cut(u64),
+}
+
+/// `pending_end_ms`: where the pending audio ends on the meeting clock
+/// (`None` = nothing pending). `arrival_start_ms`: where the new samples
+/// start, judged by when they were collected.
+fn gap_action(pending_end_ms: Option<u64>, arrival_start_ms: u64) -> GapAction {
+    let Some(end) = pending_end_ms else {
+        return GapAction::None;
+    };
+    let gap = arrival_start_ms.saturating_sub(end);
+    if gap <= GAP_TOLERANCE_MS {
+        GapAction::None
+    } else if gap <= GAP_PAD_MAX_MS {
+        GapAction::Pad(gap)
+    } else {
+        GapAction::Cut(gap)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1192,7 +2017,8 @@ fn run_recording_loop(
     }
 
     // Transcription runs on its own thread so capture never pauses for it.
-    let (chunk_tx, chunk_rx) = mpsc::channel::<(u64, Vec<f32>, f32)>();
+    // (offset_ms, duration_ms, samples, speech_ratio)
+    let (chunk_tx, chunk_rx) = mpsc::channel::<(u64, u64, Vec<f32>, f32)>();
     let worker = {
         let app = app.clone();
         let store = store.clone();
@@ -1201,13 +2027,14 @@ fn run_recording_loop(
         thread::Builder::new()
             .name(format!("meeting-{meeting_id}-{source}-transcribe"))
             .spawn(move || {
-                for (offset_ms, samples, speech_ratio) in chunk_rx {
+                for (offset_ms, duration_ms, samples, speech_ratio) in chunk_rx {
                     transcribe_chunk(
                         &app,
                         &store,
                         meeting_id,
                         &source,
                         offset_ms,
+                        duration_ms,
                         samples,
                         speech_ratio,
                         &stats,
@@ -1236,24 +2063,33 @@ fn run_recording_loop(
         }
     };
 
-    let mut vad = load_vad(app);
+    let mut classifier = match load_vad(app) {
+        Some(detector) => SpeechClassifier::Vad {
+            detector: Box::new(detector),
+            consecutive_errors: 0,
+        },
+        None => SpeechClassifier::Energy,
+    };
+    record_stat(stats, source, |s| {
+        s.chunking = classifier.mode().to_string()
+    });
     let mut pending: Vec<f32> = Vec::new();
     // Speech flag per complete 30-ms frame of `pending`.
     let mut frames: Vec<bool> = Vec::new();
+    // Where `pending[0]` sits on the meeting clock. Anchored to when samples
+    // are collected, not to a sample count, so a source whose stream pauses
+    // (e.g. system audio when nothing plays) can't drift from the other.
+    let mut pending_start_ms: Option<u64> = None;
     // Earliest offset the next chunk may have: chunks never overlap.
     let mut next_offset_ms: u64 = base_offset_ms;
     let samples_ms = |n: usize| (n as u64) * 1000 / SAMPLE_RATE as u64;
+    let ms_samples = |ms: u64| (ms as usize) * SAMPLE_RATE / 1000;
 
-    // `pending_len` is the length of the pending audio the chunk is cut
-    // from (chunk first). Its offset is anchored to the shared wall clock,
-    // not to a sample count, so a source whose stream pauses (e.g. system
-    // audio when nothing plays) can't drift away from the other source.
-    let emit = |chunk: Vec<f32>, flags: &[bool], pending_len: usize, next_offset_ms: &mut u64| {
-        let now_ms = meeting_start.elapsed().as_millis() as u64;
-        let offset_ms = now_ms
-            .saturating_sub(samples_ms(pending_len))
-            .max(*next_offset_ms);
-        *next_offset_ms = offset_ms + samples_ms(chunk.len());
+    // Queue one chunk that starts at `start_ms`; returns where it ends.
+    let emit = |chunk: Vec<f32>, flags: &[bool], start_ms: u64, next_offset_ms: &mut u64| {
+        let offset_ms = start_ms.max(*next_offset_ms);
+        let duration_ms = samples_ms(chunk.len());
+        *next_offset_ms = offset_ms + duration_ms;
         record_stat(stats, source, |s| {
             s.chunks_captured += 1;
             s.audio_seconds += chunk.len() as f64 / SAMPLE_RATE as f64;
@@ -1268,11 +2104,14 @@ fn run_recording_loop(
             return;
         }
         let speech_ratio = if flags.is_empty() {
-            1.0 // no VAD: let the transcriber decide
+            1.0 // no flags: let the transcriber decide
         } else {
             flags.iter().filter(|&&f| f).count() as f32 / flags.len() as f32
         };
-        if chunk_tx.send((offset_ms, chunk, speech_ratio)).is_err() {
+        if chunk_tx
+            .send((offset_ms, duration_ms, chunk, speech_ratio))
+            .is_err()
+        {
             warn!("Meeting {meeting_id} [{source}]: transcription worker exited early");
         }
     };
@@ -1289,10 +2128,12 @@ fn run_recording_loop(
         } else {
             recorder.drain()
         };
-        let new_samples = match new_samples {
+        let collected_at_ms = meeting_start.elapsed().as_millis() as u64;
+        let mut new_samples = match new_samples {
             Ok(s) => s,
             Err(e) => {
                 warn!("Meeting {meeting_id} [{source}]: collecting samples failed: {e}");
+                record_stat(stats, source, |s| s.drain_errors += 1);
                 if stopping {
                     Vec::new()
                 } else {
@@ -1300,6 +2141,42 @@ fn run_recording_loop(
                 }
             }
         };
+
+        if !new_samples.is_empty() {
+            let arrival_start_ms = collected_at_ms.saturating_sub(samples_ms(new_samples.len()));
+            let pending_end_ms = pending_start_ms
+                .filter(|_| !pending.is_empty())
+                .map(|start| start + samples_ms(pending.len()));
+            match gap_action(pending_end_ms, arrival_start_ms) {
+                GapAction::None => {}
+                GapAction::Pad(gap_ms) => {
+                    // Silence where the source delivered nothing keeps the
+                    // pending audio at its real moment (and the WAV aligned).
+                    record_stat(stats, source, |s| {
+                        s.gaps += 1;
+                        s.gap_ms += gap_ms;
+                        s.padded_ms += gap_ms;
+                    });
+                    let mut padded = vec![0.0f32; ms_samples(gap_ms)];
+                    padded.append(&mut new_samples);
+                    new_samples = padded;
+                }
+                GapAction::Cut(gap_ms) => {
+                    record_stat(stats, source, |s| {
+                        s.gaps += 1;
+                        s.gap_ms += gap_ms;
+                        s.gap_cuts += 1;
+                    });
+                    let chunk = std::mem::take(&mut pending);
+                    let chunk_flags = std::mem::take(&mut frames);
+                    let start = pending_start_ms.unwrap_or(next_offset_ms);
+                    emit(chunk, &chunk_flags, start, &mut next_offset_ms);
+                }
+            }
+            if pending.is_empty() {
+                pending_start_ms = Some(arrival_start_ms.max(next_offset_ms));
+            }
+        }
 
         // Persist everything captured, so the WAV keeps the full timeline.
         if let Some(w) = wav_writer.as_mut() {
@@ -1317,35 +2194,48 @@ fn run_recording_loop(
 
         // Classify the newly completed frames. Silero is stateful, so frames
         // go through one detector in order.
-        if let Some(detector) = vad.as_mut() {
-            let done = frames.len() * VAD_FRAME_SAMPLES;
-            for frame in pending[done..].as_chunks::<VAD_FRAME_SAMPLES>().0 {
-                frames.push(detector.is_voice(frame).unwrap_or(true));
+        let done = frames.len() * VAD_FRAME_SAMPLES;
+        for frame in pending[done..].as_chunks::<VAD_FRAME_SAMPLES>().0 {
+            let class = classifier.classify(frame);
+            if class.vad_error {
+                record_stat(stats, source, |s| {
+                    s.vad_errors += 1;
+                    if class.degraded {
+                        s.vad_degraded = true;
+                        s.chunking = "energy".to_string();
+                    }
+                });
             }
+            frames.push(class.speech);
         }
 
-        let has_vad = vad.is_some();
-        while let Some(cut) = find_chunk_cut(has_vad.then_some(&frames[..]), pending.len()) {
+        while let Some((cut, kind)) = find_chunk_cut(Some(&frames[..]), pending.len()) {
             let cut = cut.min(pending.len());
             if cut == 0 {
                 break;
             }
-            let pending_len = pending.len();
             let rest = pending.split_off(cut);
             let chunk = std::mem::replace(&mut pending, rest);
             let cut_frames = (cut / VAD_FRAME_SAMPLES).min(frames.len());
             let chunk_flags: Vec<bool> = frames.drain(..cut_frames).collect();
-            emit(chunk, &chunk_flags, pending_len, &mut next_offset_ms);
+            record_stat(stats, source, |s| match kind {
+                CutKind::Silence => s.silence_cuts += 1,
+                CutKind::Forced | CutKind::Fixed => s.forced_cuts += 1,
+            });
+            let start = pending_start_ms.unwrap_or(next_offset_ms);
+            emit(chunk, &chunk_flags, start, &mut next_offset_ms);
+            // The remainder follows the chunk directly.
+            pending_start_ms = Some(next_offset_ms);
         }
 
         if stopping {
             // The final chunk (captured up to the moment stop was pressed) is
             // transcribed too; MeetingManager::stop() joins off the UI thread.
             if !pending.is_empty() {
-                let pending_len = pending.len();
                 let chunk = std::mem::take(&mut pending);
                 let chunk_flags = std::mem::take(&mut frames);
-                emit(chunk, &chunk_flags, pending_len, &mut next_offset_ms);
+                let start = pending_start_ms.unwrap_or(next_offset_ms);
+                emit(chunk, &chunk_flags, start, &mut next_offset_ms);
             }
             break;
         }
@@ -1375,6 +2265,7 @@ fn transcribe_chunk(
     meeting_id: i64,
     source: &str,
     offset_ms: u64,
+    duration_ms: u64,
     samples: Vec<f32>,
     ratio: f32,
     stats: &MeetingStats,
@@ -1409,6 +2300,7 @@ fn transcribe_chunk(
                 offset_ms,
                 source: source.to_string(),
                 text: cleaned,
+                duration_ms: Some(duration_ms),
             };
             if let Err(e) = store.append_chunk(meeting_id, &chunk) {
                 error!("Failed to persist chunk: {e}");
@@ -1446,8 +2338,9 @@ mod tests {
         let mut flags = speech(14);
         flags.extend(vec![false; 20]);
         flags.extend(speech(3));
-        let cut =
+        let (cut, kind) =
             find_chunk_cut(Some(&flags), flags.len() * VAD_FRAME_SAMPLES).expect("cut expected");
+        assert_eq!(kind, CutKind::Silence);
         let speech_end = speech(14).len() * VAD_FRAME_SAMPLES;
         assert!(cut > speech_end, "cut must be inside the pause");
         assert!(cut < speech_end + 20 * VAD_FRAME_SAMPLES);
@@ -1466,8 +2359,9 @@ mod tests {
     #[test]
     fn hard_cut_at_maximum_without_pause() {
         let flags = vec![true; 25 * FRAMES_PER_SECOND];
-        let cut =
+        let (cut, kind) =
             find_chunk_cut(Some(&flags), flags.len() * VAD_FRAME_SAMPLES).expect("cut expected");
+        assert_eq!(kind, CutKind::Forced);
         assert!(cut <= CHUNK_MAX_SECONDS * SAMPLE_RATE);
         assert!(cut >= CHUNK_MAX_SECONDS * SAMPLE_RATE - VAD_FRAME_SAMPLES);
         assert_eq!(cut % VAD_FRAME_SAMPLES, 0);
@@ -1478,8 +2372,81 @@ mod tests {
         assert_eq!(find_chunk_cut(None, 10 * SAMPLE_RATE), None);
         assert_eq!(
             find_chunk_cut(None, 13 * SAMPLE_RATE),
-            Some(CHUNK_MIN_SECONDS * SAMPLE_RATE)
+            Some((CHUNK_MIN_SECONDS * SAMPLE_RATE, CutKind::Fixed))
         );
+    }
+
+    #[test]
+    fn energy_fallback_tells_silence_from_speech() {
+        assert!(!energy_is_speech(&[0.0; VAD_FRAME_SAMPLES]));
+        assert!(!energy_is_speech(&[0.002; VAD_FRAME_SAMPLES]));
+        let tone: Vec<f32> = (0..VAD_FRAME_SAMPLES)
+            .map(|i| 0.2 * (i as f32 * 0.3).sin())
+            .collect();
+        assert!(energy_is_speech(&tone));
+    }
+
+    #[test]
+    fn gaps_are_padded_or_cut() {
+        // Nothing pending: the new audio is simply anchored where it arrives.
+        assert_eq!(gap_action(None, 90_000), GapAction::None);
+        // Normal jitter between drains.
+        assert_eq!(gap_action(Some(10_000), 10_600), GapAction::None);
+        // System audio silent for 5 s: filled with silence.
+        assert_eq!(gap_action(Some(10_000), 15_000), GapAction::Pad(5_000));
+        // Silent for minutes: the pending chunk ends at its real moment.
+        assert_eq!(gap_action(Some(10_000), 130_000), GapAction::Cut(120_000));
+        // Late (buffered) samples never pad.
+        assert_eq!(gap_action(Some(10_000), 9_000), GapAction::None);
+    }
+
+    #[test]
+    fn retry_backoff_grows_and_caps() {
+        assert_eq!(retry_backoff_secs(0), 0);
+        assert_eq!(retry_backoff_secs(1), 5 * 60);
+        assert_eq!(retry_backoff_secs(2), 10 * 60);
+        assert_eq!(retry_backoff_secs(3), 20 * 60);
+        assert_eq!(retry_backoff_secs(12), RETRY_MAX_SECS);
+        assert_eq!(retry_backoff_secs(u32::MAX), RETRY_MAX_SECS);
+    }
+
+    fn person(name: &str, email: Option<&str>) -> MeetingParticipant {
+        MeetingParticipant {
+            name: name.into(),
+            email: email.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn calendar_attendees_merge_with_user_edits() {
+        let calendar = vec![person("Ana", Some("ana@x.co")), person("Luis", None)];
+
+        // Nobody set them yet, or the calendar did: replaced.
+        let (list, source) = merge_calendar_participants(&[], None, &calendar);
+        assert_eq!(list.len(), 2);
+        assert_eq!(source.as_deref(), Some(PARTICIPANTS_SOURCE_CALENDAR));
+        let (list, _) = merge_calendar_participants(
+            &[person("Old", Some("old@x.co"))],
+            Some(PARTICIPANTS_SOURCE_CALENDAR),
+            &calendar,
+        );
+        assert_eq!(list, clean_participants(calendar.clone()));
+
+        // The user added someone before the lookup finished: both kept.
+        let (list, source) = merge_calendar_participants(
+            &[person("Pedro", None), person("ANA", Some("ANA@x.co"))],
+            Some(PARTICIPANTS_SOURCE_USER),
+            &calendar,
+        );
+        assert_eq!(source.as_deref(), Some(PARTICIPANTS_SOURCE_USER));
+        let names: Vec<&str> = list.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["Pedro", "ANA", "Luis"]);
+
+        // The user removed everyone: stays empty.
+        let (list, source) =
+            merge_calendar_participants(&[], Some(PARTICIPANTS_SOURCE_USER), &calendar);
+        assert!(list.is_empty());
+        assert_eq!(source.as_deref(), Some(PARTICIPANTS_SOURCE_USER));
     }
 
     #[test]

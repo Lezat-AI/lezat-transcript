@@ -849,6 +849,14 @@ async meetingStop() : Promise<Result<number, string>> {
 async meetingActive() : Promise<number | null> {
     return await TAURI_INVOKE("meeting_active");
 },
+/**
+ * True while a meeting records or a stopped one is still being finalized,
+ * transcribed, matched to the calendar or uploaded. A relaunch (mandatory
+ * update) must wait for it.
+ */
+async meetingBusy() : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_busy");
+},
 async listMeetings(limit: number | null) : Promise<Result<MeetingRecord[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_meetings", { limit }) };
@@ -973,6 +981,11 @@ async changeTranscriptionModeSetting(mode: string) : Promise<Result<null, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Upload a meeting again ("Sync to cloud"). The backend re-extracts its
+ * tasks. Sends the diagnostics stored with the recording; the outcome is
+ * reported through `CloudSyncEvent`.
+ */
 async cloudSyncMeeting(meetingId: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cloud_sync_meeting", { meetingId }) };
@@ -1435,7 +1448,13 @@ assignee_confidence?: string | null;
 project?: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null }
 export type CloudActionItemsResponse = { items: CloudActionItem[] }
 export type CloudLoginResult = { user_email: string; user_name: string; api_key: string }
-export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state: "success"; meeting_id: number; remote_id: string } | { state: "failed"; meeting_id: number; error: string }
+export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state: "success"; meeting_id: number; remote_id: string } | { state: "failed"; meeting_id: number; error: string } | 
+/**
+ * The upload went through but something was degraded. `code` is
+ * machine-readable (e.g. "calendar_context_dropped") for the UI to
+ * translate.
+ */
+{ state: "warning"; meeting_id: number; code: string }
 export type CloudTranscription = { id: string; provider: string; meeting_id: string | null; meeting_title: string | null; meeting_platform: string | null; transcript_text_available: boolean; transcript_text: string | null; participant_count: number | null; received_at: string }
 export type CloudTranscriptionsResponse = { items: CloudTranscription[] }
 export type CompletedTask = { description: string; source_sentence: string | null }
@@ -1475,7 +1494,12 @@ offset_ms: number;
 /**
  * "mic" or "system" (second reserved for dual-stream work)
  */
-source: string; text: string }
+source: string; text: string; 
+/**
+ * Audio length of the chunk in ms (12–20 s, cut at pauses). Missing on
+ * recordings made before it was tracked.
+ */
+duration_ms?: number | null }
 /**
  * One meeting attendee. Names added by hand have no email.
  */
@@ -1488,7 +1512,17 @@ calendar_event_id?: string | null; calendar_event_title?: string | null;
 /**
  * Attendees: detected from the calendar and/or edited by the user.
  */
-participants?: MeetingParticipant[] }
+participants?: MeetingParticipant[]; 
+/**
+ * Who set `participants`: "calendar", "user", or nobody yet. An empty
+ * list set by the user means they removed everyone on purpose.
+ */
+participants_source?: string | null; 
+/**
+ * Upload state: "pending" | "failed" | "synced". `None` for meetings
+ * recorded without cloud sync or before this was tracked.
+ */
+sync_state?: string | null }
 export type MeetingStateEvent = { state: "started"; meeting_id: number; title: string } | { state: "stopped"; meeting_id: number } | { state: "error"; meeting_id: number | null; message: string }
 export type MeetingTranscriptChunkEvent = { meeting_id: number; chunk: MeetingChunk }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }

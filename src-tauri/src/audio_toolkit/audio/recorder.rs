@@ -32,6 +32,14 @@ enum AudioChunk {
     EndOfStream,
 }
 
+/// How long `drain` waits for the worker to hand over samples.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long `stop` waits: the worker itself waits up to 2 s for the stream
+/// to confirm the end, so a dead device can't hang the caller forever.
+const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often the worker checks for commands while no audio arrives.
+const COMMAND_POLL: Duration = Duration::from_millis(50);
+
 pub struct AudioRecorder {
     device: Option<Device>,
     cmd_tx: Option<mpsc::Sender<Cmd>>,
@@ -209,7 +217,7 @@ impl AudioRecorder {
         if let Some(tx) = &self.cmd_tx {
             tx.send(Cmd::Stop(resp_tx))?;
         }
-        Ok(resp_rx.recv()?) // wait for the samples
+        Ok(resp_rx.recv_timeout(STOP_TIMEOUT)?) // wait for the samples
     }
 
     /// Take the samples captured since `start` (or the previous drain)
@@ -220,7 +228,9 @@ impl AudioRecorder {
         if let Some(tx) = &self.cmd_tx {
             tx.send(Cmd::Drain(resp_tx))?;
         }
-        Ok(resp_rx.recv_timeout(Duration::from_secs(2))?)
+        // On timeout the samples aren't lost: the worker keeps them for the
+        // next drain when it can't deliver them.
+        Ok(resp_rx.recv_timeout(DRAIN_TIMEOUT)?)
     }
 
     pub fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -455,27 +465,28 @@ fn run_consumer(
     }
 
     loop {
-        let chunk = match sample_rx.recv() {
-            Ok(c) => c,
-            Err(_) => break, // stream closed
+        // Wait for audio with a timeout so commands are served even when the
+        // device delivers nothing (unplugged mic, silent loopback): a drain
+        // or stop must never wait on the next audio callback.
+        let raw = match sample_rx.recv_timeout(COMMAND_POLL) {
+            Ok(AudioChunk::Samples(s)) => Some(s),
+            Ok(AudioChunk::EndOfStream) | Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break, // stream closed
         };
 
-        let raw = match chunk {
-            AudioChunk::Samples(s) => s,
-            AudioChunk::EndOfStream => continue,
-        };
-
-        // ---------- spectrum processing ---------------------------------- //
-        if let Some(buckets) = visualizer.feed(&raw) {
-            if let Some(cb) = &level_cb {
-                cb(buckets);
+        if let Some(raw) = raw {
+            // ---------- spectrum processing ------------------------------ //
+            if let Some(buckets) = visualizer.feed(&raw) {
+                if let Some(cb) = &level_cb {
+                    cb(buckets);
+                }
             }
-        }
 
-        // ---------- existing pipeline ------------------------------------ //
-        frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            handle_frame(frame, recording, &vad, &mut processed_samples)
-        });
+            // ---------- existing pipeline -------------------------------- //
+            frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                handle_frame(frame, recording, &vad, &mut processed_samples)
+            });
+        }
 
         // non-blocking check for a command
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -516,14 +527,26 @@ fn run_consumer(
                         handle_frame(frame, true, &vad, &mut processed_samples)
                     });
 
-                    let _ = reply_tx.send(std::mem::take(&mut processed_samples));
+                    if let Err(mpsc::SendError(samples)) =
+                        reply_tx.send(std::mem::take(&mut processed_samples))
+                    {
+                        // The caller gave up waiting; keep the audio.
+                        processed_samples = samples;
+                    }
 
                     // Resume the audio callback so the consumer loop can continue
                     // receiving chunks (important for always-on microphone mode).
                     stop_flag.store(false, Ordering::Relaxed);
                 }
                 Cmd::Drain(reply_tx) => {
-                    let _ = reply_tx.send(std::mem::take(&mut processed_samples));
+                    // A drain the caller already gave up on (timeout) can't
+                    // be delivered: keep its samples for the next drain
+                    // instead of dropping them.
+                    if let Err(mpsc::SendError(samples)) =
+                        reply_tx.send(std::mem::take(&mut processed_samples))
+                    {
+                        processed_samples = samples;
+                    }
                 }
                 Cmd::Shutdown => {
                     stop_flag.store(true, Ordering::Relaxed);

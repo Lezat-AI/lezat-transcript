@@ -171,6 +171,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(meeting_manager.clone());
+    // Uploads that failed (offline, backend down) or never ran (app quit
+    // mid-upload) are retried in the background.
+    meeting_manager.spawn_sync_retry_worker();
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -437,6 +440,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::meeting_start,
             commands::meetings::meeting_stop,
             commands::meetings::meeting_active,
+            commands::meetings::meeting_busy,
             commands::meetings::list_meetings,
             commands::meetings::get_meeting,
             commands::meetings::delete_meeting,
