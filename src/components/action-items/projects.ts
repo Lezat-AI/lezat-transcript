@@ -12,6 +12,8 @@ export const KNOWN_PROJECTS = [
   "MediaZat",
   "WealthZat",
   "Wazat",
+  "NewsZat",
+  "BotZat",
   "Teucalí",
   "Kaza Living",
   "Lezat",
