@@ -133,6 +133,32 @@ pub struct CloudActionItem {
     #[serde(default)]
     pub synced_to: Vec<String>,
     pub created_at: Option<String>,
+    /// Card still open (to do / in progress) on the user's board that this
+    /// task repeats. Approving with `{"notion_existing_page_id": page_id}` in
+    /// the edits updates that card instead of creating a new one.
+    #[serde(default)]
+    pub board_match: Option<BoardMatch>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct BoardMatch {
+    /// "same": it is that card. "possible": maybe; the user decides.
+    pub kind: String,
+    pub page_id: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The card's column ("To Do", "In Progress"...).
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub assignee_name: Option<String>,
+    /// The card's current due date (YYYY-MM-DD).
+    #[serde(default)]
+    pub due_date: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 fn default_task_type() -> String {

@@ -48,6 +48,7 @@ import {
   User,
   CalendarDays,
   Folder,
+  Copy,
 } from "lucide-react";
 
 interface MeetingGroup {
@@ -861,6 +862,23 @@ const ActionItemRow = React.memo(function ActionItemRow({
               value={resolveProject(item)}
               onChange={(project) => onChangeProject([item.id], project)}
             />
+          )}
+          {isPending && item.board_match && (
+            <span
+              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                item.board_match.kind === "same"
+                  ? "bg-blue-500/15 text-blue-500"
+                  : "bg-amber-500/15 text-amber-600"
+              }`}
+              title={t("actionItems.boardMatch.existsBadgeHint", {
+                title: item.board_match.title ?? "",
+              })}
+            >
+              <Copy className="w-2.5 h-2.5" />
+              {item.board_match.kind === "same"
+                ? t("actionItems.boardMatch.existsBadge")
+                : t("actionItems.boardMatch.possibleBadge")}
+            </span>
           )}
           {item.task_type === TASK_TYPE_PREVIOUS && !hasTimesheetEntry && (
             <span

@@ -792,6 +792,22 @@
       "invalidDate": "The date isn't valid.",
       "unsavedInApproval_one": "1 selected task has unsaved changes: they will be used when you approve.",
       "unsavedInApproval_other": "{{count}} selected tasks have unsaved changes: they will be used when you approve."
+    },
+    "boardMatch": {
+      "existsBadge": "Already in Notion",
+      "possibleBadge": "Possible duplicate",
+      "existsBadgeHint": "Repeats \"{{title}}\", still open on your board. When approving you can update that card instead of creating another.",
+      "existsTitle": "Already in Notion: \"{{title}}\"",
+      "possibleTitle": "Possible duplicate of \"{{title}}\"",
+      "cardInfo": "{{status}} · {{assignee}} · due {{due}}",
+      "noValue": "—",
+      "openCard": "Open in Notion",
+      "updateExisting": "Update the existing one",
+      "createNew": "Create as new",
+      "updateHint": "It gets the new due date and a note saying it came up again. Its status doesn't change.",
+      "updateNoDate": "No new date was said: set it here or the card will be flagged to define it.",
+      "undecided_one": "1 task may be a duplicate: choose whether to update the existing one or create it as new.",
+      "undecided_other": "{{count}} tasks may be duplicates: choose whether to update the existing ones or create them as new."
     }
   },
   "integrations": {

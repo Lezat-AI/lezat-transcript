@@ -4,11 +4,14 @@ import {
   AlertCircle,
   CheckCircle2,
   Check,
+  Copy,
+  ExternalLink,
   Loader2,
   Send,
   Video,
   X,
 } from "lucide-react";
+import type { BoardMatch } from "@/bindings";
 import {
   CALENDAR_TARGETS,
   type CloudActionItem,
@@ -35,7 +38,16 @@ interface EditableItem extends TaskDraft {
   meeting_title: string;
   /** Groups tasks by meeting: two meetings can share a title ("Daily"). */
   meeting_key: string;
+  /** Open card on the board this task repeats, if any. */
+  board_match: BoardMatch | null;
+  /**
+   * What approving does with that card: update it or create a new one.
+   * `null` = not decided yet ("possible" duplicates start like this).
+   */
+  board_choice: BoardChoice | null;
 }
+
+type BoardChoice = "update" | "new";
 
 /** Integrations that can't receive approved tasks from here. */
 const NON_TARGET_PROVIDERS = ["read-ai", "monday", "fireflies"];
@@ -92,6 +104,10 @@ export function ApprovalReviewModal({
       meeting_title:
         i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
       meeting_key: i.meeting_id ?? i.meeting_name ?? i.meeting_title ?? "",
+      board_match: i.board_match ?? null,
+      // A sure repeat updates its card unless the user says otherwise; a
+      // possible one waits for the user's call.
+      board_choice: i.board_match?.kind === "same" ? "update" : null,
     })),
   );
   // Tasks left out of the approval disappear from this window.
@@ -138,7 +154,7 @@ export function ApprovalReviewModal({
     });
 
   // ── Item edits ──
-  const updateItem = (id: string, patch: Partial<TaskDraft>) => {
+  const updateItem = (id: string, patch: Partial<EditableItem>) => {
     setEditableItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
     );
@@ -161,12 +177,17 @@ export function ApprovalReviewModal({
   const itemsInvalid = editableItems.filter(
     (i) => draftProblem(i, i) !== null,
   ).length;
+  // A possible duplicate is never created on its own: the user decides.
+  const itemsUndecided = sendsToNotion
+    ? editableItems.filter((i) => i.board_match && !i.board_choice).length
+    : 0;
   const canConfirm =
     !submitting &&
     editableItems.length > 0 &&
     targets.size > 0 &&
     itemsMissingBoard === 0 &&
-    itemsInvalid === 0;
+    itemsInvalid === 0 &&
+    itemsUndecided === 0;
 
   const handleConfirm = () => {
     setSubmitting(true);
@@ -186,6 +207,11 @@ export function ApprovalReviewModal({
       // Always the board picked in this window.
       const board = notionDbId;
       if (sendsToNotion && board) changed.notion_database_id = board;
+      if (sendsToNotion && edited.board_match && edited.board_choice === "update") {
+        // The card keeps its column: only its date and a note change.
+        changed.notion_existing_page_id = edited.board_match.page_id;
+        delete changed.notion_status;
+      }
       edits[edited.id] = changed;
     }
     const integrationSettings: Record<string, string> = {};
@@ -392,6 +418,7 @@ export function ApprovalReviewModal({
                           <TaskCard
                             key={item.id}
                             item={item}
+                            showBoardMatch={sendsToNotion}
                             config={config}
                             onChange={updateItem}
                             onExclude={
@@ -416,6 +443,12 @@ export function ApprovalReviewModal({
             <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               {t("actionItems.review.invalidItems", { count: itemsInvalid })}
+            </p>
+          )}
+          {itemsUndecided > 0 && (
+            <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {t("actionItems.boardMatch.undecided", { count: itemsUndecided })}
             </p>
           )}
           {itemsMissingBoard > 0 && (
@@ -473,13 +506,16 @@ export function ApprovalReviewModal({
 
 function TaskCard({
   item,
+  showBoardMatch,
   config,
   onChange,
   onExclude,
 }: {
   item: EditableItem;
+  /** Only when the tasks go to Notion. */
+  showBoardMatch: boolean;
   config: PreloadedConfig;
-  onChange: (id: string, patch: Partial<TaskDraft>) => void;
+  onChange: (id: string, patch: Partial<EditableItem>) => void;
   onExclude?: (id: string) => void;
 }) {
   const { t } = useTranslation();
@@ -509,6 +545,15 @@ function TaskCard({
         )}
       </div>
 
+      {showBoardMatch && item.board_match && (
+        <BoardMatchChoice
+          match={item.board_match}
+          choice={item.board_choice}
+          hasDate={Boolean(item.due_date)}
+          onChoose={(choice) => onChange(item.id, { board_choice: choice })}
+        />
+      )}
+
       <TaskFields
         draft={item}
         people={config.notionPeople}
@@ -519,6 +564,93 @@ function TaskCard({
         <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
           <AlertCircle className="w-3.5 h-3.5 shrink-0" />
           {t(problem)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Open card this task repeats ─────────────────────────────────
+
+/** "dd/mm/yyyy" for a "YYYY-MM-DD" date, as the team reads it. */
+function formatDay(iso: string | null | undefined): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : null;
+}
+
+function BoardMatchChoice({
+  match,
+  choice,
+  hasDate,
+  onChoose,
+}: {
+  match: BoardMatch;
+  choice: BoardChoice | null;
+  hasDate: boolean;
+  onChoose: (choice: BoardChoice) => void;
+}) {
+  const { t } = useTranslation();
+  const sure = match.kind === "same";
+  const title = match.title ?? "";
+  const option = (value: BoardChoice, label: string) => (
+    <button
+      type="button"
+      aria-pressed={choice === value}
+      onClick={() => onChoose(value)}
+      className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
+        choice === value
+          ? "border-lezat-sage/60 bg-lezat-sage/15 text-text"
+          : "border-mid-gray/20 text-mid-gray hover:bg-mid-gray/10"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div
+      className={`rounded-md px-2.5 py-2 flex flex-col gap-1.5 border ${
+        sure ? "border-blue-500/30 bg-blue-500/[0.06]" : "border-amber-500/40 bg-amber-500/[0.06]"
+      }`}
+    >
+      <div className="flex items-start gap-1.5">
+        <Copy className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${sure ? "text-blue-500" : "text-amber-500"}`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] font-medium break-words">
+            {sure
+              ? t("actionItems.boardMatch.existsTitle", { title })
+              : t("actionItems.boardMatch.possibleTitle", { title })}
+          </p>
+          <p className="text-[10px] text-mid-gray">
+            {t("actionItems.boardMatch.cardInfo", {
+              status: match.status || t("actionItems.boardMatch.noValue"),
+              assignee: match.assignee_name || t("actionItems.boardMatch.noValue"),
+              due: formatDay(match.due_date) ?? t("actionItems.boardMatch.noValue"),
+            })}
+          </p>
+        </div>
+        {match.url && (
+          <a
+            href={match.url}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 p-0.5 rounded text-mid-gray hover:text-text hover:bg-mid-gray/10"
+            title={t("actionItems.boardMatch.openCard")}
+            aria-label={t("actionItems.boardMatch.openCard")}
+          >
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {option("update", t("actionItems.boardMatch.updateExisting"))}
+        {option("new", t("actionItems.boardMatch.createNew"))}
+      </div>
+      {choice === "update" && (
+        <p className="text-[10px] text-mid-gray">
+          {hasDate
+            ? t("actionItems.boardMatch.updateHint")
+            : t("actionItems.boardMatch.updateNoDate")}
         </p>
       )}
     </div>

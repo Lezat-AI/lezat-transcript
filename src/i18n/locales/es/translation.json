@@ -792,6 +792,22 @@
       "invalidDate": "La fecha no es válida.",
       "unsavedInApproval_one": "1 tarea seleccionada tiene cambios sin guardar: se usarán al aprobar.",
       "unsavedInApproval_other": "{{count}} tareas seleccionadas tienen cambios sin guardar: se usarán al aprobar."
+    },
+    "boardMatch": {
+      "existsBadge": "Ya está en Notion",
+      "possibleBadge": "Posible duplicado",
+      "existsBadgeHint": "Repite «{{title}}», que sigue abierta en tu tablero. Al aprobar puedes actualizar esa tarjeta en vez de crear otra.",
+      "existsTitle": "Ya existe en Notion: «{{title}}»",
+      "possibleTitle": "Posible duplicado de «{{title}}»",
+      "cardInfo": "{{status}} · {{assignee}} · vence {{due}}",
+      "noValue": "—",
+      "openCard": "Abrir en Notion",
+      "updateExisting": "Actualizar la existente",
+      "createNew": "Crear como nueva",
+      "updateHint": "Se le pone la nueva fecha y una nota de que se retomó. Su estado no cambia.",
+      "updateNoDate": "No se dijo una nueva fecha: ponla aquí o la tarjeta quedará marcada para definirla.",
+      "undecided_one": "1 tarea puede ser un duplicado: elige si actualizas la existente o la creas como nueva.",
+      "undecided_other": "{{count}} tareas pueden ser duplicados: elige si actualizas la existente o las creas como nuevas."
     }
   },
   "integrations": {

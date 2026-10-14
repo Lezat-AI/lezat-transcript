@@ -1,5 +1,7 @@
 // Types and helpers shared by the meeting-tasks page and its approval modal.
 
+import type { BoardMatch } from "@/bindings";
+
 export interface CloudActionItem {
   id: string;
   meeting_id: string | null;
@@ -19,6 +21,8 @@ export interface CloudActionItem {
   status: string;
   synced_to: string[];
   created_at: string | null;
+  /** Card still open on the user's board that this task repeats. */
+  board_match?: BoardMatch | null;
 }
 
 export interface IntegrationInfo {
@@ -54,6 +58,8 @@ export interface ItemEdits {
   task_type?: string;
   /** Notion status (column) for the card; absent = automatic by task type. */
   notion_status?: string;
+  /** Update this open card (the task's `board_match`) instead of creating one. */
+  notion_existing_page_id?: string;
 }
 
 export interface PreloadedConfig {

@@ -1417,6 +1417,19 @@ timesheet_task_entries?: Partial<{ [key in string]: number }> }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
+export type BoardMatch = { 
+/**
+ * "same": it is that card. "possible": maybe; the user decides.
+ */
+kind: string; page_id: string; url?: string | null; title?: string | null; 
+/**
+ * The card's column ("To Do", "In Progress"...).
+ */
+status?: string | null; assignee_name?: string | null; 
+/**
+ * The card's current due date (YYYY-MM-DD).
+ */
+due_date?: string | null; project?: string | null }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CloudActionItem = { id: string; meeting_id: string | null; meeting_title: string | null; description: string | null; assignee: string | null; 
@@ -1437,15 +1450,17 @@ meeting_name?: string | null;
  */
 assignee_confidence?: string | null; 
 /**
- * Notion board suggested for the task, with the reason.
- */
-
-/**
  * Official project/client name (e.g. "PeopleZat"); `None` = no project.
  * Editable through `update_action_item` edits as `{"project": "..."}`
  * (`""` clears it).
  */
-project?: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null }
+project?: string | null; due_date: string | null; task_type?: string; status?: string; synced_to?: string[]; created_at: string | null; 
+/**
+ * Card still open (to do / in progress) on the user's board that this
+ * task repeats. Approving with `{"notion_existing_page_id": page_id}` in
+ * the edits updates that card instead of creating a new one.
+ */
+board_match?: BoardMatch | null }
 export type CloudActionItemsResponse = { items: CloudActionItem[] }
 export type CloudLoginResult = { user_email: string; user_name: string; api_key: string }
 export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state: "success"; meeting_id: number; remote_id: string } | { state: "failed"; meeting_id: number; error: string } | 
