@@ -9,6 +9,7 @@ import {
   type NotionPersonOption,
   TASK_TYPE_PENDING,
   TASK_TYPE_PREVIOUS,
+  WORK_TYPES,
 } from "./shared";
 
 /** Editable values of one task, as the form shows them. */
@@ -22,6 +23,8 @@ export interface TaskDraft {
   /** "YYYY-MM-DD" or "" (no date). */
   due_date: string;
   task_type: string;
+  /** One of `WORK_TYPES`, or "" when not classified. */
+  work_type: string;
 }
 
 // Select values that aren't Notion user ids.
@@ -62,6 +65,7 @@ export function makeDraft(
       item.task_type === TASK_TYPE_PREVIOUS
         ? TASK_TYPE_PREVIOUS
         : TASK_TYPE_PENDING,
+    work_type: item.work_type ?? "",
   };
 }
 
@@ -102,6 +106,7 @@ export function draftEdits(draft: TaskDraft, item: CloudActionItem): ItemEdits {
       ? TASK_TYPE_PREVIOUS
       : TASK_TYPE_PENDING;
   if (draft.task_type !== savedType) changed.task_type = draft.task_type;
+  if (draft.work_type !== (item.work_type ?? "")) changed.work_type = draft.work_type;
   return changed;
 }
 
@@ -123,6 +128,7 @@ export function applyEdits(
   }
   if (edits.due_date != null) next.due_date = edits.due_date || null;
   if (edits.task_type != null) next.task_type = edits.task_type;
+  if (edits.work_type != null) next.work_type = edits.work_type || null;
   return next;
 }
 
@@ -173,7 +179,7 @@ export function TaskTitleInput({
 }
 
 /**
- * Description, owner and due date of one task. The title is the separate
+ * Description, owner, kind of work and due date of one task. The title is the separate
  * `TaskTitleInput` and Pending vs. Previous the `TaskTypeSwitch`, shown next to it.
  */
 export function TaskFields({
@@ -268,6 +274,25 @@ export function TaskFields({
               className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
             />
           )}
+        </label>
+
+        {/* Kind of work: where the team's effort goes */}
+        <label className="flex-1 min-w-[140px] flex flex-col gap-1">
+          <span className={fieldLabel}>{t("actionItems.workType.label")}</span>
+          <select
+            value={draft.work_type}
+            onChange={(e) => onChange({ work_type: e.target.value })}
+            disabled={disabled}
+            title={t("actionItems.workType.hint")}
+            className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
+          >
+            <option value="">{t("actionItems.workType.none")}</option>
+            {WORK_TYPES.map((key) => (
+              <option key={key} value={key}>
+                {t(`actionItems.workType.${key}`)}
+              </option>
+            ))}
+          </select>
         </label>
 
         {/* Due date (optional); a task already done has none, it goes to the timesheet */}

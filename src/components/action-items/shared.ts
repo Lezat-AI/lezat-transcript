@@ -23,6 +23,10 @@ export interface CloudActionItem {
   created_at: string | null;
   /** Card still open on the user's board that this task repeats. */
   board_match?: BoardMatch | null;
+  /** Kind of work (one of `WORK_TYPES`), null when not classified. */
+  work_type?: string | null;
+  /** `due_date` is the team default (next Monday): nobody said a date. */
+  due_date_defaulted?: boolean;
 }
 
 export interface IntegrationInfo {
@@ -62,6 +66,8 @@ export interface ItemEdits {
   notion_status?: string;
   /** Update this open card (the task's `board_match`) instead of creating one. */
   notion_existing_page_id?: string;
+  /** One of `WORK_TYPES`; "" clears it. */
+  work_type?: string;
 }
 
 export interface PreloadedConfig {
@@ -71,6 +77,16 @@ export interface PreloadedConfig {
   mondayStatuses: Record<string, SelectOption[]>; // keyed by board_id
   notionPeople: NotionPersonOption[];
 }
+
+/** Kinds of work a task can be (labels: `actionItems.workType.<key>`). */
+export const WORK_TYPES = [
+  "construir",
+  "qa",
+  "vender",
+  "entregar",
+  "marketing",
+  "interno",
+] as const;
 
 export const TASK_TYPE_PENDING = "pending";
 export const TASK_TYPE_PREVIOUS = "completed_previous";

@@ -50,6 +50,7 @@ import {
   CalendarDays,
   Folder,
   Copy,
+  Tag,
 } from "lucide-react";
 
 interface MeetingGroup {
@@ -869,6 +870,15 @@ const ActionItemRow = React.memo(function ActionItemRow({
               value={resolveProject(item)}
               onChange={(project) => onChangeProject([item.id], project)}
             />
+          )}
+          {item.work_type && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-mid-gray/10 text-[10px] font-medium"
+              title={t("actionItems.workType.label")}
+            >
+              <Tag className="w-2.5 h-2.5" />
+              {t(`actionItems.workType.${item.work_type}`, { defaultValue: item.work_type })}
+            </span>
           )}
           {isPending && item.board_match && (
             <span

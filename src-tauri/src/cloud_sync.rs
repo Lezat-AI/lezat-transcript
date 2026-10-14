@@ -138,6 +138,14 @@ pub struct CloudActionItem {
     /// the edits updates that card instead of creating a new one.
     #[serde(default)]
     pub board_match: Option<BoardMatch>,
+    /// Kind of work: "construir" | "qa" | "vender" | "entregar" | "marketing" |
+    /// "interno"; `None` = not classified. Editable through `update_action_item`
+    /// edits as `{"work_type": "..."}` (`""` clears it).
+    #[serde(default)]
+    pub work_type: Option<String>,
+    /// `due_date` is the team default (next Monday): nobody said a date.
+    #[serde(default)]
+    pub due_date_defaulted: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Type)]

@@ -812,6 +812,17 @@
       "updateNoDate": "No new date was said: set it here or the card will be flagged to define it.",
       "undecided_one": "1 task may be a duplicate: choose whether to update the existing one or create it as new.",
       "undecided_other": "{{count}} tasks may be duplicates: choose whether to update the existing ones or create them as new."
+    },
+    "workType": {
+      "label": "Type",
+      "hint": "What kind of work it is: shows where the team's time goes.",
+      "none": "No type",
+      "construir": "Build",
+      "qa": "QA / Testing",
+      "vender": "Sell",
+      "entregar": "Deliver",
+      "marketing": "Marketing",
+      "interno": "Internal"
     }
   },
   "integrations": {

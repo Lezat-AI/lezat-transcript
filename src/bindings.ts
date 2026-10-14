@@ -1460,7 +1460,17 @@ project?: string | null; due_date: string | null; task_type?: string; status?: s
  * task repeats. Approving with `{"notion_existing_page_id": page_id}` in
  * the edits updates that card instead of creating a new one.
  */
-board_match?: BoardMatch | null }
+board_match?: BoardMatch | null; 
+/**
+ * Kind of work: "construir" | "qa" | "vender" | "entregar" | "marketing" |
+ * "interno"; `None` = not classified. Editable through `update_action_item`
+ * edits as `{"work_type": "..."}` (`""` clears it).
+ */
+work_type?: string | null; 
+/**
+ * `due_date` is the team default (next Monday): nobody said a date.
+ */
+due_date_defaulted?: boolean }
 export type CloudActionItemsResponse = { items: CloudActionItem[] }
 export type CloudLoginResult = { user_email: string; user_name: string; api_key: string }
 export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state: "success"; meeting_id: number; remote_id: string } | { state: "failed"; meeting_id: number; error: string } | 

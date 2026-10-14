@@ -812,6 +812,17 @@
       "updateNoDate": "No se dijo una nueva fecha: ponla aquí o la tarjeta quedará marcada para definirla.",
       "undecided_one": "1 tarea puede ser un duplicado: elige si actualizas la existente o la creas como nueva.",
       "undecided_other": "{{count}} tareas pueden ser duplicados: elige si actualizas la existente o las creas como nuevas."
+    },
+    "workType": {
+      "label": "Tipo",
+      "hint": "Qué tipo de trabajo es: sirve para ver en qué se va el tiempo del equipo.",
+      "none": "Sin tipo",
+      "construir": "Construir",
+      "qa": "QA / Testeo",
+      "vender": "Vender",
+      "entregar": "Entregar",
+      "marketing": "Marketing",
+      "interno": "Interno"
     }
   },
   "integrations": {

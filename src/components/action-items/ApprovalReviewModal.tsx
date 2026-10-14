@@ -31,6 +31,7 @@ import {
   TaskFields,
   TaskTitleInput,
   TaskTypeSwitch,
+  toInputDate,
 } from "./TaskEditor";
 
 interface EditableItem extends TaskDraft {
@@ -47,6 +48,8 @@ interface EditableItem extends TaskDraft {
    * `null` = not decided yet ("possible" duplicates start like this).
    */
   board_choice: BoardChoice | null;
+  /** The default date (next Monday) the task came with, if nobody said one. */
+  default_due_date: string | null;
 }
 
 type BoardChoice = "update" | "new";
@@ -110,6 +113,7 @@ export function ApprovalReviewModal({
       // A sure repeat updates its card unless the user says otherwise; a
       // possible one waits for the user's call.
       board_choice: i.board_match?.kind === "same" ? "update" : null,
+      default_due_date: i.due_date_defaulted ? toInputDate(i.due_date) : null,
     })),
   );
   // Tasks left out of the approval disappear from this window.
@@ -554,7 +558,8 @@ function TaskCard({
         <BoardMatchChoice
           match={item.board_match}
           choice={item.board_choice}
-          hasDate={Boolean(item.due_date)}
+          // The default Monday doesn't move the card: only a date someone set does.
+          hasDate={Boolean(item.due_date) && item.due_date !== item.default_due_date}
           onChoose={(choice) => onChange(item.id, { board_choice: choice })}
         />
       )}
