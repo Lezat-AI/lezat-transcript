@@ -788,10 +788,14 @@
       "close": "Close",
       "unsaved": "Unsaved changes",
       "saveFailed": "Couldn't save the changes. {{detail}}",
+      "titleRequired": "Write a title: it is the Notion card's name.",
       "descriptionRequired": "Write a description: this task has no title.",
       "invalidDate": "The date isn't valid.",
       "unsavedInApproval_one": "1 selected task has unsaved changes: they will be used when you approve.",
-      "unsavedInApproval_other": "{{count}} selected tasks have unsaved changes: they will be used when you approve."
+      "unsavedInApproval_other": "{{count}} selected tasks have unsaved changes: they will be used when you approve.",
+      "title": "Title",
+      "titlePlaceholder": "Task title",
+      "titleHint": "This is the name the Notion card gets."
     },
     "boardMatch": {
       "existsBadge": "Already in Notion",

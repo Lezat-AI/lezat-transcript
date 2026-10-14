@@ -23,6 +23,7 @@ import {
   makeDraft,
   type TaskDraft,
   TaskFields,
+  TaskTitleInput,
   TaskTypeSwitch,
 } from "./TaskEditor";
 
@@ -710,6 +711,12 @@ function InlineTaskEditor({
           disabled={saving}
         />
       </div>
+
+      <TaskTitleInput
+        value={draft.title}
+        onChange={(title) => onChange(item.id, { title })}
+        disabled={saving}
+      />
 
       <TaskFields
         draft={draft}

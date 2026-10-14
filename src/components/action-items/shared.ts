@@ -48,6 +48,8 @@ export interface NotionPersonOption {
 
 /** Edits sent when approving; owner fields travel together when picked from Notion. */
 export interface ItemEdits {
+  /** Task title (the Notion card's name); never sent empty. */
+  title?: string;
   description?: string;
   assignee?: string;
   assignee_notion_user_id?: string;

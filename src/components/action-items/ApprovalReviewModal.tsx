@@ -29,12 +29,14 @@ import {
   makeDraft,
   type TaskDraft,
   TaskFields,
+  TaskTitleInput,
   TaskTypeSwitch,
 } from "./TaskEditor";
 
 interface EditableItem extends TaskDraft {
   id: string;
-  title: string;
+  /** Title saved for the task: an edited title can't be cleared. */
+  saved_title: string;
   meeting_title: string;
   /** Groups tasks by meeting: two meetings can share a title ("Daily"). */
   meeting_key: string;
@@ -100,7 +102,7 @@ export function ApprovalReviewModal({
     items.map((i) => ({
       ...(drafts?.[i.id] ?? makeDraft(i, config.notionPeople)),
       id: i.id,
-      title: i.title ?? "",
+      saved_title: i.title ?? "",
       meeting_title:
         i.meeting_name ?? i.meeting_title ?? t("actionItems.untitledMeeting"),
       meeting_key: i.meeting_id ?? i.meeting_name ?? i.meeting_title ?? "",
@@ -175,7 +177,7 @@ export function ApprovalReviewModal({
   // Notion needs a board picked by the user: no board, no approval.
   const itemsMissingBoard = sendsToNotion && !notionDbId ? editableItems.length : 0;
   const itemsInvalid = editableItems.filter(
-    (i) => draftProblem(i, i) !== null,
+    (i) => draftProblem(i, { title: i.saved_title }) !== null,
   ).length;
   // A possible duplicate is never created on its own: the user decides.
   const itemsUndecided = sendsToNotion
@@ -519,15 +521,18 @@ function TaskCard({
   onExclude?: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const problem = draftProblem(item, item);
+  const problem = draftProblem(item, { title: item.saved_title });
 
   return (
     <div className="rounded-lg border border-mid-gray/15 p-3 flex flex-col gap-2.5">
-      {/* Title + Pending / Previous */}
+      {/* Title (the card's name) + Pending / Previous */}
       <div className="flex items-start gap-3">
-        <p className="flex-1 min-w-0 text-sm font-medium">
-          {item.title || item.description || "—"}
-        </p>
+        <div className="flex-1 min-w-0">
+          <TaskTitleInput
+            value={item.title}
+            onChange={(title) => onChange(item.id, { title })}
+          />
+        </div>
         <TaskTypeSwitch
           value={item.task_type}
           onChange={(value) => onChange(item.id, { task_type: value })}

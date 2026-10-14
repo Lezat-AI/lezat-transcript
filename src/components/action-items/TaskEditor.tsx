@@ -1,5 +1,5 @@
-// Task fields the user can edit before approving (description, owner, due date
-// and Pending vs. Previous). Shared by the inline editor on the tasks page and
+// Task fields the user can edit before approving (title, description, owner,
+// due date and Pending vs. Previous). Shared by the inline editor on the tasks page and
 // the approval modal, so both edit the same draft the same way.
 import { useTranslation } from "react-i18next";
 import {
@@ -13,6 +13,8 @@ import {
 
 /** Editable values of one task, as the form shows them. */
 export interface TaskDraft {
+  /** Name of the Notion card. */
+  title: string;
   description: string;
   assignee: string;
   assignee_notion_user_id: string;
@@ -46,6 +48,7 @@ export function makeDraft(
     people.find((p) => p.id === item.assignee_notion_user_id) ??
     (item.assignee ? findNotionPerson(item.assignee, people) : undefined);
   return {
+    title: item.title ?? "",
     description: item.description ?? "",
     assignee: linked?.name ?? item.assignee ?? "",
     // Keep the saved person while the Notion people list isn't loaded yet.
@@ -77,6 +80,9 @@ export function isDraftDirty(
 /** Only the fields that changed against the saved task, as the backend expects them. */
 export function draftEdits(draft: TaskDraft, item: CloudActionItem): ItemEdits {
   const changed: ItemEdits = {};
+  if (draft.title !== (item.title ?? "") && draft.title.trim()) {
+    changed.title = draft.title.trim();
+  }
   if (draft.description !== (item.description ?? "")) {
     changed.description = draft.description;
   }
@@ -106,6 +112,7 @@ export function applyEdits(
 ): CloudActionItem {
   if (!edits) return item;
   const next = { ...item };
+  if (edits.title) next.title = edits.title;
   if (edits.description != null) next.description = edits.description;
   if (edits.assignee != null) {
     next.assignee = edits.assignee || null;
@@ -124,9 +131,11 @@ export function draftProblem(
   draft: TaskDraft,
   item: Pick<CloudActionItem, "title">,
 ): string | null {
-  // A task without a title is only its description: it can't be left empty.
-  if (!item.title?.trim() && !draft.description.trim()) {
-    return "actionItems.edit.descriptionRequired";
+  if (!draft.title.trim()) {
+    // The title names the Notion card: it can be reworded, not removed.
+    if (item.title?.trim()) return "actionItems.edit.titleRequired";
+    // An old task without a title is only its description: it can't be left empty.
+    if (!draft.description.trim()) return "actionItems.edit.descriptionRequired";
   }
   if (draft.due_date && !/^\d{4}-\d{2}-\d{2}$/.test(draft.due_date)) {
     return "actionItems.edit.invalidDate";
@@ -134,9 +143,38 @@ export function draftProblem(
   return null;
 }
 
+/** The task title, i.e. the name its Notion card gets. */
+export function TaskTitleInput({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: string;
+  onChange: (title: string) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      aria-label={t("actionItems.edit.title")}
+      title={t("actionItems.edit.titleHint")}
+      placeholder={t("actionItems.edit.titlePlaceholder")}
+      className={`${fieldInput} font-medium ${
+        value.trim()
+          ? "border-mid-gray/15 focus:border-lezat-sage/50"
+          : "border-amber-500/50 focus:border-amber-500"
+      }`}
+    />
+  );
+}
+
 /**
- * Description, owner and due date of one task. Pending vs. Previous is the
- * separate `TaskTypeSwitch`, shown next to the title.
+ * Description, owner and due date of one task. The title is the separate
+ * `TaskTitleInput` and Pending vs. Previous the `TaskTypeSwitch`, shown next to it.
  */
 export function TaskFields({
   draft,

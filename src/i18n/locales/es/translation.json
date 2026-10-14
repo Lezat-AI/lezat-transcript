@@ -788,10 +788,14 @@
       "close": "Cerrar",
       "unsaved": "Cambios sin guardar",
       "saveFailed": "No se pudieron guardar los cambios. {{detail}}",
+      "titleRequired": "Escribe un título: es el nombre de la tarjeta en Notion.",
       "descriptionRequired": "Escribe una descripción: esta tarea no tiene título.",
       "invalidDate": "La fecha no es válida.",
       "unsavedInApproval_one": "1 tarea seleccionada tiene cambios sin guardar: se usarán al aprobar.",
-      "unsavedInApproval_other": "{{count}} tareas seleccionadas tienen cambios sin guardar: se usarán al aprobar."
+      "unsavedInApproval_other": "{{count}} tareas seleccionadas tienen cambios sin guardar: se usarán al aprobar.",
+      "title": "Título",
+      "titlePlaceholder": "Título de la tarea",
+      "titleHint": "Es el nombre que tendrá la tarjeta en Notion."
     },
     "boardMatch": {
       "existsBadge": "Ya está en Notion",

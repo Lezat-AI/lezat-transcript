@@ -11,13 +11,23 @@ export const KNOWN_PROJECTS = [
   "SocialZat",
   "MediaZat",
   "WealthZat",
-  "Wazat",
   "NewsZat",
   "BotZat",
   "Teucalí",
   "Kaza Living",
+  "Botero Brain",
   "Lezat",
 ] as const;
+
+/**
+ * Renamed products: tasks saved with the old name show the new one. "MediaZat
+ * B2B" is plain MediaZat now that B2C became NewsZat.
+ */
+const RENAMED_PROJECTS: Record<string, string> = {
+  wazat: "BotZat",
+  mediazatb2c: "NewsZat",
+  mediazatb2b: "MediaZat",
+};
 
 /** Projects offered when moving a task, alphabetically ("Kaza Living", "Lezat"…). */
 export const PROJECT_OPTIONS: readonly string[] = [...KNOWN_PROJECTS].sort(
@@ -34,11 +44,12 @@ function compact(value: string): string {
 }
 
 /** Tidy a backend project name: known projects get their usual spelling. */
-function canonicalProject(value: string): string | null {
+export function canonicalProject(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const known = KNOWN_PROJECTS.find((p) => compact(p) === compact(trimmed));
-  return known ?? trimmed;
+  const key = compact(trimmed);
+  const known = KNOWN_PROJECTS.find((p) => compact(p) === key);
+  return known ?? RENAMED_PROJECTS[key] ?? trimmed;
 }
 
 /** Project for a task: the backend's value (null = no project). */
