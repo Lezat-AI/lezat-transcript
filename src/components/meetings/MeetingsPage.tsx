@@ -10,6 +10,7 @@ import type { MeetingRecord, MeetingChunk, SystemAudioAvailability } from "@/bin
 import { useSettings } from "@/hooks/useSettings";
 import { AudioPlayer } from "../ui/AudioPlayer";
 import { HeadphonesNotice, MeetingContextPanel } from "./MeetingContextPanel";
+import { MeetingBotPanel } from "./MeetingBotPanel";
 import {
   MeetingTranscriptView,
   formatDialogAsText,
@@ -501,6 +502,8 @@ export function MeetingsPage() {
       {contextMeetingId !== null && cloudSyncEnabled && (
         <MeetingContextPanel meetingId={contextMeetingId} />
       )}
+
+      {cloudSyncEnabled && <MeetingBotPanel />}
 
       {/* Cloud sync status for last completed meeting */}
       {Object.entries(syncStatus).length > 0 && (

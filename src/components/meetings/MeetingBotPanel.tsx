@@ -1,0 +1,217 @@
+import React, { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Bot, Loader2, LogOut, Send, ListChecks } from "lucide-react";
+import { commands } from "@/bindings";
+import type { MeetingBot } from "@/bindings";
+
+/// Bot states after which it is out of the meeting for good.
+const GONE_STATES = new Set(["ended", "fatal_error", "data_deleted"]);
+/// Statuses after which nothing else will happen to the bot.
+const FINAL_STATUSES = new Set(["ingested", "no_transcript", "failed"]);
+const POLL_MS = 8000;
+const SHOWN_BOTS = 5;
+
+function isFinished(bot: MeetingBot): boolean {
+  return (
+    FINAL_STATUSES.has(bot.status) &&
+    (GONE_STATES.has(bot.state) || bot.status === "failed")
+  );
+}
+
+function inMeeting(bot: MeetingBot): boolean {
+  return bot.state.startsWith("joined");
+}
+
+function statusKey(bot: MeetingBot): string {
+  if (bot.status === "ingested") return "meetingBot.status.ingested";
+  if (bot.status === "no_transcript") return "meetingBot.status.noTranscript";
+  if (bot.status === "failed" || bot.state === "fatal_error")
+    return "meetingBot.status.failed";
+  if (bot.status === "processing" || bot.state === "ended")
+    return "meetingBot.status.processing";
+  if (bot.state === "waiting_room") return "meetingBot.status.waitingRoom";
+  if (inMeeting(bot)) return "meetingBot.status.inMeeting";
+  if (bot.state === "leaving" || bot.state === "post_processing")
+    return "meetingBot.status.leaving";
+  return "meetingBot.status.joining";
+}
+
+function statusTone(bot: MeetingBot): string {
+  if (bot.status === "ingested") return "text-green-500";
+  if (bot.status === "failed" || bot.state === "fatal_error")
+    return "text-red-500";
+  if (bot.status === "no_transcript") return "text-mid-gray";
+  return "text-blue-500";
+}
+
+/// Sends the "Lezat Notetaker" bot to a Meet/Teams/Zoom link: the host admits
+/// it and, when the meeting ends, its tasks show up for review like those of
+/// a recording, without anyone pressing record.
+export function MeetingBotPanel() {
+  const { t } = useTranslation();
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [isDaily, setIsDaily] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [bots, setBots] = useState<MeetingBot[]>([]);
+  // null until the server says whether it can send bots: hidden meanwhile.
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await commands.cloudListMeetingBots();
+      if (res.status === "ok") {
+        setBots(res.data.bots.slice(0, SHOWN_BOTS));
+        setEnabled(res.data.enabled);
+      } else if (res.error.includes("does not support the meeting bot")) {
+        setEnabled(false);
+      }
+    } catch {
+      // Offline: keep what is shown and try again on the next poll.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const anyActive = bots.some((b) => !isFinished(b));
+  useEffect(() => {
+    if (!anyActive) return;
+    const timer = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [anyActive, refresh]);
+
+  const send = async () => {
+    if (!url.trim() || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const res = await commands.cloudSendMeetingBot(
+        url.trim(),
+        title.trim(),
+        isDaily,
+      );
+      if (res.status === "ok") {
+        setBots((prev) => [res.data, ...prev].slice(0, SHOWN_BOTS));
+        setUrl("");
+        setTitle("");
+        setIsDaily(false);
+      } else {
+        setError(res.error);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const remove = async (botId: string) => {
+    const res = await commands.cloudRemoveMeetingBot(botId);
+    if (res.status === "ok") {
+      setBots((prev) => prev.map((b) => (b.bot_id === botId ? res.data : b)));
+    } else {
+      setError(res.error);
+    }
+  };
+
+  if (!enabled) return null;
+
+  return (
+    <section className="rounded-xl border border-mid-gray/20 p-5 flex flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-bold flex items-center gap-2">
+          <Bot className="w-5 h-5" />
+          {t("meetingBot.title")}
+        </h2>
+        <p className="text-sm text-mid-gray">{t("meetingBot.description")}</p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void send()}
+          placeholder={t("meetingBot.urlPlaceholder")}
+          className="w-full px-3 py-2 rounded-lg border border-mid-gray/30 bg-transparent text-sm"
+          disabled={sending}
+        />
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={t("meetingBot.titlePlaceholder")}
+          className="w-full px-3 py-2 rounded-lg border border-mid-gray/30 bg-transparent text-sm"
+          disabled={sending}
+        />
+        <div className="flex items-center justify-between gap-3">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm">
+            <input
+              type="checkbox"
+              checked={isDaily}
+              onChange={() => setIsDaily(!isDaily)}
+              className="accent-lezat-sage"
+              disabled={sending}
+            />
+            <ListChecks className="w-4 h-4" />
+            <span>{t("meetingBot.daily")}</span>
+          </label>
+          <button
+            onClick={() => void send()}
+            disabled={!url.trim() || sending}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-logo-primary text-background text-sm font-medium hover:opacity-90 disabled:opacity-50 transition"
+          >
+            {sending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
+            {t("meetingBot.send")}
+          </button>
+        </div>
+        <p className="text-xs text-mid-gray">{t("meetingBot.admitHint")}</p>
+      </div>
+
+      {error && (
+        <div className="text-sm text-red-500 border border-red-500/30 bg-red-500/5 rounded p-2">
+          {error}
+        </div>
+      )}
+
+      {bots.length > 0 && (
+        <ul className="flex flex-col gap-2 pt-3 border-t border-mid-gray/15">
+          {bots.map((bot) => (
+            <li key={bot.bot_id} className="flex items-center gap-3 text-sm">
+              <div className="flex-1 min-w-0">
+                <div className="truncate">{bot.title || bot.meeting_url}</div>
+                <div className={`text-xs ${statusTone(bot)}`}>
+                  {t(statusKey(bot), {
+                    count: bot.action_items_count,
+                    error: bot.error ?? "",
+                  })}
+                </div>
+              </div>
+              {!isFinished(bot) && !GONE_STATES.has(bot.state) && (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-mid-gray shrink-0" />
+                  {inMeeting(bot) && (
+                    <button
+                      onClick={() => void remove(bot.bot_id)}
+                      className="flex items-center gap-1 text-xs text-mid-gray hover:text-red-500 shrink-0"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      {t("meetingBot.remove")}
+                    </button>
+                  )}
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

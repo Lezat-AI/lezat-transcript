@@ -1026,6 +1026,30 @@ async cloudGetTranscriptions() : Promise<Result<CloudTranscriptionsResponse, str
     else return { status: "error", error: e  as any };
 }
 },
+async cloudSendMeetingBot(meetingUrl: string, title: string, isDaily: boolean) : Promise<Result<MeetingBot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_send_meeting_bot", { meetingUrl, title, isDaily }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudListMeetingBots() : Promise<Result<MeetingBotList, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_list_meeting_bots") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudRemoveMeetingBot(botId: string) : Promise<Result<MeetingBot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_remove_meeting_bot", { botId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cloudGetIntegrationsStatus() : Promise<Result<IntegrationsStatusResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cloud_get_integrations_status") };
@@ -1511,6 +1535,25 @@ export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
  * Emitted once the calendar lookup for a meeting finishes.
  */
 export type MeetingCalendarContextEvent = { meeting_id: number; calendar_event_id: string | null; calendar_event_title: string | null; participants: MeetingParticipant[] }
+/**
+ * The notetaker bot sent to a meeting link (Google Meet, Teams, Zoom). The
+ * host admits it; when the meeting ends the backend extracts the tasks.
+ */
+export type MeetingBot = { bot_id: string; meeting_url: string; meeting_platform: string; title: string; 
+/**
+ * Bot state in the meeting: joining, waiting_room, joined_recording,
+ * leaving, post_processing, ended, fatal_error...
+ */
+state: string; 
+/**
+ * Processing of its transcript: sent, processing, ingested,
+ * no_transcript, failed.
+ */
+status: string; error: string | null; meeting_id: string | null; action_items_count: number; created_at: string }
+/**
+ * Recent bots of the user, and whether the server can send bots at all.
+ */
+export type MeetingBotList = { enabled: boolean; bots: MeetingBot[] }
 export type MeetingChunk = { 
 /**
  * ms offset from meeting start

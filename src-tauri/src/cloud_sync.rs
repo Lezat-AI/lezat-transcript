@@ -848,6 +848,99 @@ pub fn fetch_transcriptions(settings: &AppSettings) -> Result<CloudTranscription
     })
 }
 
+/// The notetaker bot sent to a meeting link (Google Meet, Teams, Zoom). The
+/// host admits it; when the meeting ends the backend extracts the tasks.
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct MeetingBot {
+    pub bot_id: String,
+    pub meeting_url: String,
+    pub meeting_platform: String,
+    pub title: String,
+    /// Bot state in the meeting: joining, waiting_room, joined_recording,
+    /// leaving, post_processing, ended, fatal_error...
+    pub state: String,
+    /// Processing of its transcript: sent, processing, ingested,
+    /// no_transcript, failed.
+    pub status: String,
+    pub error: Option<String>,
+    pub meeting_id: Option<String>,
+    pub action_items_count: i64,
+    pub created_at: String,
+}
+
+/// Recent bots of the user, and whether the server can send bots at all.
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct MeetingBotList {
+    pub enabled: bool,
+    pub bots: Vec<MeetingBot>,
+}
+
+/// `detail` of a FastAPI error body, else the raw body.
+fn error_detail(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+        .unwrap_or_else(|| truncate_chars(body, 300))
+}
+
+fn parse_meeting_bot_response<T: serde::de::DeserializeOwned>(
+    resp: reqwest::blocking::Response,
+    what: &str,
+) -> Result<T> {
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    if status.as_u16() == 404 && body.contains("Not Found") {
+        return Err(anyhow!("The server does not support the meeting bot yet"));
+    }
+    if !status.is_success() {
+        return Err(anyhow!("{} (HTTP {status}): {}", what, error_detail(&body)));
+    }
+    serde_json::from_str::<T>(&body).map_err(|e| anyhow!("Failed to parse {what}: {e}"))
+}
+
+pub fn send_meeting_bot(
+    settings: &AppSettings,
+    meeting_url: &str,
+    title: &str,
+    is_daily: bool,
+) -> Result<MeetingBot> {
+    let url = format!("{}/api/desktop/bots", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .post(&url)
+        .header("X-API-Key", key)
+        .json(&serde_json::json!({
+            "meeting_url": meeting_url,
+            "title": title,
+            "is_daily": is_daily,
+        }))
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    parse_meeting_bot_response(resp, "Could not send the bot")
+}
+
+pub fn fetch_meeting_bots(settings: &AppSettings) -> Result<MeetingBotList> {
+    let url = format!("{}/api/desktop/bots", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .get(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    parse_meeting_bot_response(resp, "Could not list the bots")
+}
+
+pub fn remove_meeting_bot(settings: &AppSettings, bot_id: &str) -> Result<MeetingBot> {
+    let url = format!("{}/api/desktop/bots/{}/leave", base_url(settings)?, bot_id);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .post(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    parse_meeting_bot_response(resp, "Could not remove the bot")
+}
+
 /// Fetch integrations status from the backend.
 pub fn fetch_integrations_status(settings: &AppSettings) -> Result<IntegrationsStatusResponse> {
     let url = format!("{}/api/desktop/integrations/status", base_url(settings)?);
@@ -1779,5 +1872,29 @@ mod tests {
             at("2026-10-07T10:00:00Z"),
         );
         assert!(best.is_none());
+    }
+
+    #[test]
+    fn meeting_bot_list_parses_the_backend_response() {
+        // As returned by GET /api/desktop/bots (FastAPI, ISO datetimes).
+        let body = r#"{"enabled": true, "bots": [{
+            "bot_id": "bot_1", "meeting_url": "https://meet.google.com/hjb-sdfs-mvb",
+            "meeting_platform": "google_meet", "title": "Weekly", "state": "ended",
+            "status": "ingested", "error": null, "meeting_id": "local-attendee-bot_1",
+            "action_items_count": 3, "created_at": "2026-10-15T15:00:00Z",
+            "updated_at": "2026-10-15T16:00:00Z"}]}"#;
+        let list: MeetingBotList = serde_json::from_str(body).unwrap();
+        assert!(list.enabled);
+        assert_eq!(list.bots[0].action_items_count, 3);
+        assert_eq!(list.bots[0].status, "ingested");
+    }
+
+    #[test]
+    fn error_detail_reads_fastapi_errors() {
+        assert_eq!(
+            error_detail(r#"{"detail": "Unsupported meeting link"}"#),
+            "Unsupported meeting link"
+        );
+        assert_eq!(error_detail("Bad gateway"), "Bad gateway");
     }
 }

@@ -85,6 +85,47 @@ pub async fn cloud_update_action_item(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn cloud_send_meeting_bot(
+    app: AppHandle,
+    meeting_url: String,
+    title: String,
+    is_daily: bool,
+) -> Result<cloud_sync::MeetingBot, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::send_meeting_bot(&s, &meeting_url, &title, is_daily).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_list_meeting_bots(app: AppHandle) -> Result<cloud_sync::MeetingBotList, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::fetch_meeting_bots(&s).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_remove_meeting_bot(
+    app: AppHandle,
+    bot_id: String,
+) -> Result<cloud_sync::MeetingBot, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::remove_meeting_bot(&s, &bot_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn cloud_get_transcriptions(
     app: AppHandle,
 ) -> Result<cloud_sync::CloudTranscriptionsResponse, String> {

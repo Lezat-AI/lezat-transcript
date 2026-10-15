@@ -924,5 +924,26 @@
     "syncPending": "Pendiente de subir",
     "syncFailed": "No se pudo subir, se reintentará automáticamente",
     "syncSynced": "Subida"
+  },
+  "meetingBot": {
+    "title": "Enviar Lezat Notetaker",
+    "description": "El bot entra a la reunión como un participante y la transcribe por ti. Al terminar, las tareas aparecen para revisar, sin que nadie tenga que grabar.",
+    "urlPlaceholder": "Link de Google Meet, Teams o Zoom",
+    "titlePlaceholder": "Nombre de la reunión (opcional)",
+    "daily": "Daily standup",
+    "send": "Enviar bot",
+    "admitHint": "Cuando pida entrar, admítelo en la reunión. Avisa en el chat que está transcribiendo.",
+    "remove": "Sacar",
+    "status": {
+      "joining": "Entrando a la reunión…",
+      "waitingRoom": "Esperando que lo admitan",
+      "inMeeting": "En la reunión, transcribiendo",
+      "leaving": "Saliendo de la reunión…",
+      "processing": "Generando las tareas…",
+      "ingested_one": "{{count}} tarea lista para revisar",
+      "ingested_other": "{{count}} tareas listas para revisar",
+      "noTranscript": "No hubo nada que transcribir",
+      "failed": "No funcionó: {{error}}"
+    }
   }
 }
