@@ -863,9 +863,33 @@ pub struct MeetingBot {
     /// no_transcript, failed.
     pub status: String,
     pub error: Option<String>,
+    /// manual (link sent from the app) or calendar (auto-join).
+    pub source: String,
     pub meeting_id: Option<String>,
     pub action_items_count: i64,
     pub created_at: String,
+}
+
+/// A calendar meeting with a Meet/Teams/Zoom link in the next 24 h.
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct UpcomingBotMeeting {
+    pub event_id: String,
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    pub meeting_url: String,
+    pub meeting_platform: String,
+    /// Whether the bot will join it under the current auto-join choice.
+    pub bot_joins: bool,
+}
+
+/// Which calendar meetings the bot joins by itself: off, all (every meeting
+/// with a link) or organized (only the user's own).
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct MeetingBotSettings {
+    pub auto_join: String,
+    pub calendar_connected: bool,
+    pub upcoming: Vec<UpcomingBotMeeting>,
 }
 
 /// Recent bots of the user, and whether the server can send bots at all.
@@ -928,6 +952,32 @@ pub fn fetch_meeting_bots(settings: &AppSettings) -> Result<MeetingBotList> {
         .send()
         .map_err(|e| anyhow!("Network error: {e}"))?;
     parse_meeting_bot_response(resp, "Could not list the bots")
+}
+
+pub fn fetch_meeting_bot_settings(settings: &AppSettings) -> Result<MeetingBotSettings> {
+    let url = format!("{}/api/desktop/bots/settings", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .get(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    parse_meeting_bot_response(resp, "Could not read the bot settings")
+}
+
+pub fn update_meeting_bot_settings(
+    settings: &AppSettings,
+    auto_join: &str,
+) -> Result<MeetingBotSettings> {
+    let url = format!("{}/api/desktop/bots/settings", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .put(&url)
+        .header("X-API-Key", key)
+        .json(&serde_json::json!({ "auto_join": auto_join }))
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    parse_meeting_bot_response(resp, "Could not save the bot settings")
 }
 
 pub fn remove_meeting_bot(settings: &AppSettings, bot_id: &str) -> Result<MeetingBot> {
@@ -1880,7 +1930,8 @@ mod tests {
         let body = r#"{"enabled": true, "bots": [{
             "bot_id": "bot_1", "meeting_url": "https://meet.google.com/hjb-sdfs-mvb",
             "meeting_platform": "google_meet", "title": "Weekly", "state": "ended",
-            "status": "ingested", "error": null, "meeting_id": "local-attendee-bot_1",
+            "status": "ingested", "error": null, "source": "calendar",
+            "meeting_id": "local-attendee-bot_1",
             "action_items_count": 3, "created_at": "2026-10-15T15:00:00Z",
             "updated_at": "2026-10-15T16:00:00Z"}]}"#;
         let list: MeetingBotList = serde_json::from_str(body).unwrap();

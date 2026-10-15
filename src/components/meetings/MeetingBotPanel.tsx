@@ -1,14 +1,25 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, Loader2, LogOut, Send, ListChecks } from "lucide-react";
+import {
+  Bot,
+  CalendarDays,
+  Loader2,
+  LogOut,
+  Send,
+  ListChecks,
+} from "lucide-react";
 import { commands } from "@/bindings";
-import type { MeetingBot } from "@/bindings";
+import type { MeetingBot, MeetingBotSettings } from "@/bindings";
 
 /// Bot states after which it is out of the meeting for good.
 const GONE_STATES = new Set(["ended", "fatal_error", "data_deleted"]);
 /// Statuses after which nothing else will happen to the bot.
 const FINAL_STATUSES = new Set(["ingested", "no_transcript", "failed"]);
 const POLL_MS = 8000;
+/// With auto-join on, bots appear without the user doing anything.
+const AUTO_JOIN_POLL_MS = 30000;
+const AUTO_JOIN_MODES = ["off", "all", "organized"] as const;
+const SHOWN_UPCOMING = 4;
 const SHOWN_BOTS = 5;
 
 function isFinished(bot: MeetingBot): boolean {
@@ -36,6 +47,14 @@ function statusKey(bot: MeetingBot): string {
   return "meetingBot.status.joining";
 }
 
+function formatMeetingTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function statusTone(bot: MeetingBot): string {
   if (bot.status === "ingested") return "text-green-500";
   if (bot.status === "failed" || bot.state === "fatal_error")
@@ -57,6 +76,10 @@ export function MeetingBotPanel() {
   const [bots, setBots] = useState<MeetingBot[]>([]);
   // null until the server says whether it can send bots: hidden meanwhile.
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [botSettings, setBotSettings] = useState<MeetingBotSettings | null>(
+    null,
+  );
+  const [savingMode, setSavingMode] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -76,12 +99,39 @@ export function MeetingBotPanel() {
     void refresh();
   }, [refresh]);
 
-  const anyActive = bots.some((b) => !isFinished(b));
   useEffect(() => {
-    if (!anyActive) return;
-    const timer = setInterval(() => void refresh(), POLL_MS);
+    if (!enabled) return;
+    commands
+      .cloudGetMeetingBotSettings()
+      .then((res) => res.status === "ok" && setBotSettings(res.data))
+      .catch(() => undefined);
+  }, [enabled]);
+
+  const anyActive = bots.some((b) => !isFinished(b));
+  const autoJoinOn = (botSettings?.auto_join ?? "off") !== "off";
+  useEffect(() => {
+    if (!anyActive && !autoJoinOn) return;
+    const timer = setInterval(
+      () => void refresh(),
+      anyActive ? POLL_MS : AUTO_JOIN_POLL_MS,
+    );
     return () => clearInterval(timer);
-  }, [anyActive, refresh]);
+  }, [anyActive, autoJoinOn, refresh]);
+
+  const setAutoJoin = async (mode: string) => {
+    if (savingMode || mode === botSettings?.auto_join) return;
+    setSavingMode(true);
+    setError(null);
+    try {
+      const res = await commands.cloudSetMeetingBotAutoJoin(mode);
+      if (res.status === "ok") setBotSettings(res.data);
+      else setError(res.error);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingMode(false);
+    }
+  };
 
   const send = async () => {
     if (!url.trim() || sending) return;
@@ -129,7 +179,76 @@ export function MeetingBotPanel() {
         <p className="text-sm text-mid-gray">{t("meetingBot.description")}</p>
       </div>
 
-      <div className="flex flex-col gap-2">
+      {botSettings && (
+        <div className="flex flex-col gap-2">
+          <div className="text-sm font-medium flex items-center gap-2">
+            <CalendarDays className="w-4 h-4" />
+            {t("meetingBot.autoJoin.title")}
+          </div>
+          <div className="flex rounded-lg border border-mid-gray/30 overflow-hidden text-sm">
+            {AUTO_JOIN_MODES.map((mode) => (
+              <button
+                key={mode}
+                onClick={() => void setAutoJoin(mode)}
+                disabled={savingMode || !botSettings.calendar_connected}
+                className={`flex-1 px-3 py-2 transition disabled:opacity-50 ${
+                  botSettings.auto_join === mode
+                    ? "bg-logo-primary text-background font-medium"
+                    : "hover:bg-mid-gray/10"
+                }`}
+              >
+                {t(`meetingBot.autoJoin.${mode}`)}
+              </button>
+            ))}
+          </div>
+          {!botSettings.calendar_connected ? (
+            <p className="text-xs text-mid-gray">
+              {t("meetingBot.autoJoin.noCalendar")}
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-mid-gray">
+                {t("meetingBot.autoJoin.hint")}
+              </p>
+              {botSettings.upcoming.length === 0 ? (
+                <p className="text-xs text-mid-gray">
+                  {t("meetingBot.autoJoin.noUpcoming")}
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {botSettings.upcoming.slice(0, SHOWN_UPCOMING).map((m) => (
+                    <li
+                      key={m.event_id}
+                      className="flex items-center gap-3 text-xs"
+                    >
+                      <span className="text-mid-gray tabular-nums shrink-0">
+                        {formatMeetingTime(m.start)}
+                      </span>
+                      <span className="flex-1 truncate">
+                        {m.title || m.meeting_url}
+                      </span>
+                      <span
+                        className={
+                          m.bot_joins ? "text-green-500" : "text-mid-gray"
+                        }
+                      >
+                        {t(
+                          m.bot_joins
+                            ? "meetingBot.autoJoin.botJoins"
+                            : "meetingBot.autoJoin.noBot",
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-2 pt-3 border-t border-mid-gray/15">
+        <div className="text-sm font-medium">{t("meetingBot.manualTitle")}</div>
         <input
           type="url"
           value={url}
@@ -186,7 +305,14 @@ export function MeetingBotPanel() {
           {bots.map((bot) => (
             <li key={bot.bot_id} className="flex items-center gap-3 text-sm">
               <div className="flex-1 min-w-0">
-                <div className="truncate">{bot.title || bot.meeting_url}</div>
+                <div className="truncate">
+                  {bot.title || bot.meeting_url}
+                  {bot.source === "calendar" && (
+                    <span className="ml-2 text-xs text-mid-gray">
+                      {t("meetingBot.fromCalendar")}
+                    </span>
+                  )}
+                </div>
                 <div className={`text-xs ${statusTone(bot)}`}>
                   {t(statusKey(bot), {
                     count: bot.action_items_count,

@@ -112,6 +112,33 @@ pub async fn cloud_list_meeting_bots(app: AppHandle) -> Result<cloud_sync::Meeti
 
 #[tauri::command]
 #[specta::specta]
+pub async fn cloud_get_meeting_bot_settings(
+    app: AppHandle,
+) -> Result<cloud_sync::MeetingBotSettings, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::fetch_meeting_bot_settings(&s).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_set_meeting_bot_auto_join(
+    app: AppHandle,
+    auto_join: String,
+) -> Result<cloud_sync::MeetingBotSettings, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::update_meeting_bot_settings(&s, &auto_join).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn cloud_remove_meeting_bot(
     app: AppHandle,
     bot_id: String,

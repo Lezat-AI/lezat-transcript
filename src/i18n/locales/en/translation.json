@@ -944,6 +944,19 @@
       "ingested_other": "{{count}} tasks ready for review",
       "noTranscript": "There was nothing to transcribe",
       "failed": "It did not work: {{error}}"
+    },
+    "manualTitle": "Or send it now with the link",
+    "fromCalendar": "· from your calendar",
+    "autoJoin": {
+      "title": "Join my calendar meetings by itself",
+      "off": "Off",
+      "all": "All with a link",
+      "organized": "The ones I organize",
+      "hint": "The bot asks to join a minute before each meeting; the host admits it.",
+      "noCalendar": "Connect your Google or Outlook Calendar in Integrations so the bot joins by itself.",
+      "noUpcoming": "No meetings with a link in the next 24 hours.",
+      "botJoins": "Bot joins",
+      "noBot": "No bot"
     }
   }
 }

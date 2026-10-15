@@ -1050,6 +1050,22 @@ async cloudRemoveMeetingBot(botId: string) : Promise<Result<MeetingBot, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async cloudGetMeetingBotSettings() : Promise<Result<MeetingBotSettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_meeting_bot_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudSetMeetingBotAutoJoin(autoJoin: string) : Promise<Result<MeetingBotSettings, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_set_meeting_bot_auto_join", { autoJoin }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cloudGetIntegrationsStatus() : Promise<Result<IntegrationsStatusResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cloud_get_integrations_status") };
@@ -1545,11 +1561,20 @@ state: string;
  * Processing of its transcript: sent, processing, ingested,
  * no_transcript, failed.
  */
-status: string; error: string | null; meeting_id: string | null; action_items_count: number; created_at: string }
+status: string; error: string | null; 
+/**
+ * manual (link sent from the app) or calendar (auto-join).
+ */
+source: string; meeting_id: string | null; action_items_count: number; created_at: string }
 /**
  * Recent bots of the user, and whether the server can send bots at all.
  */
 export type MeetingBotList = { enabled: boolean; bots: MeetingBot[] }
+/**
+ * Which calendar meetings the bot joins by itself: off, all (every meeting
+ * with a link) or organized (only the user's own).
+ */
+export type MeetingBotSettings = { auto_join: string; calendar_connected: boolean; upcoming: UpcomingBotMeeting[] }
 /**
  * Emitted once the calendar lookup for a meeting finishes.
  */
@@ -1640,6 +1665,14 @@ export type TranscriptionMode =
  */
 "local"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * A calendar meeting with a Meet/Teams/Zoom link in the next 24 h.
+ */
+export type UpcomingBotMeeting = { event_id: string; title: string; start: string; end: string; meeting_url: string; meeting_platform: string; 
+/**
+ * Whether the bot will join it under the current auto-join choice.
+ */
+bot_joins: boolean }
 export type WhisperAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 

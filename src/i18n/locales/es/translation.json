@@ -944,6 +944,19 @@
       "ingested_other": "{{count}} tareas listas para revisar",
       "noTranscript": "No hubo nada que transcribir",
       "failed": "No funcionó: {{error}}"
+    },
+    "manualTitle": "O envíalo ahora con el link",
+    "fromCalendar": "· desde tu calendario",
+    "autoJoin": {
+      "title": "Entrar solo a mis reuniones del calendario",
+      "off": "No",
+      "all": "Todas con link",
+      "organized": "Las que organizo",
+      "hint": "El bot pide entrar un minuto antes de cada reunión; el anfitrión lo admite.",
+      "noCalendar": "Conecta tu Google o Outlook Calendar en Integraciones para que el bot entre solo.",
+      "noUpcoming": "No tienes reuniones con link en las próximas 24 horas.",
+      "botJoins": "Entra el bot",
+      "noBot": "Sin bot"
     }
   }
 }
