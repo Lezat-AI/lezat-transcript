@@ -11,6 +11,7 @@ import {
   TASK_TYPE_PREVIOUS,
   WORK_TYPES,
 } from "./shared";
+import { DayMonthYearInput } from "@/components/ui/DayMonthYearInput";
 
 /** Editable values of one task, as the form shows them. */
 export interface TaskDraft {
@@ -305,11 +306,9 @@ export function TaskFields({
             <span className={fieldLabel}>
               {t("actionItems.review.dueDateOptional")}
             </span>
-            <input
-              type="date"
-              lang="es"
+            <DayMonthYearInput
               value={draft.due_date}
-              onChange={(e) => onChange({ due_date: e.target.value })}
+              onChange={(due_date) => onChange({ due_date })}
               disabled={disabled}
               className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
             />

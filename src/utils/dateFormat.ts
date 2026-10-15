@@ -1,3 +1,5 @@
+import { formatDayMonthYear, formatDayMonthYearTime } from "./dayMonthYear";
+
 /**
  * Format a date string or timestamp to a localized date and time string
  * @param timestamp - Unix timestamp in seconds (as string)
@@ -15,13 +17,8 @@ export const formatDateTime = (timestamp: string, locale: string): string => {
       return timestamp; // Return original if invalid
     }
 
-    return new Intl.DateTimeFormat(locale, {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
+    // Always day/month/year, whatever the language (see dayMonthYear.ts).
+    return formatDayMonthYearTime(date);
   } catch (error) {
     console.error("Failed to format date:", error);
     return timestamp; // Fallback to original timestamp
@@ -45,11 +42,7 @@ export const formatDate = (timestamp: string, locale: string): string => {
       return timestamp; // Return original if invalid
     }
 
-    return new Intl.DateTimeFormat(locale, {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    }).format(date);
+    return formatDayMonthYear(date);
   } catch (error) {
     console.error("Failed to format date:", error);
     return timestamp; // Fallback to original timestamp

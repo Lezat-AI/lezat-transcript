@@ -1,4 +1,5 @@
 // Types and helpers shared by the meeting-tasks page and its approval modal.
+import { isoToDayMonthYear } from "@/utils/dayMonthYear";
 
 import type { BoardMatch } from "@/bindings";
 
@@ -97,8 +98,7 @@ export const CALENDAR_TARGETS = ["google-calendar", "outlook-calendar"];
 /** "2026-10-01" (or an ISO datetime) → "01/10/2026". Other values pass through. */
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "";
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+  return isoToDayMonthYear(value) || value;
 }
 
 const normalizePersonName = (value: string) =>

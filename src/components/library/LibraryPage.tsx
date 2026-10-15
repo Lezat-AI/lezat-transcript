@@ -38,6 +38,7 @@ import {
   saveTranscriptViewMode,
   type TranscriptViewMode,
 } from "../meetings/MeetingTranscriptView";
+import { formatUnixSeconds } from "@/utils/dayMonthYear";
 
 /// Unified "Library" view — the single canonical browser for everything the
 /// app captures: dictations and meeting recordings. All power-user actions
@@ -105,10 +106,7 @@ function formatDuration(ms: number): string {
 }
 
 function formatWhen(ts: number): string {
-  return new Date(ts * 1000).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return formatUnixSeconds(ts);
 }
 
 async function downloadMeetingAudio(

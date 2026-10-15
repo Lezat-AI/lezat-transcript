@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { commands } from "@/bindings";
 import type { MeetingBot, MeetingBotSettings } from "@/bindings";
+import { formatDayMonthYearTime } from "@/utils/dayMonthYear";
 
 /// Bot states after which it is out of the meeting for good.
 const GONE_STATES = new Set(["ended", "fatal_error", "data_deleted"]);
@@ -48,11 +49,7 @@ function statusKey(bot: MeetingBot): string {
 }
 
 function formatMeetingTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDayMonthYearTime(new Date(iso));
 }
 
 function statusTone(bot: MeetingBot): string {

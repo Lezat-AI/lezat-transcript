@@ -657,7 +657,9 @@
     "off": "Desactivado",
     "yes": "Sí",
     "no": "No",
-    "noOptionsFound": "No se encontraron opciones"
+    "noOptionsFound": "No se encontraron opciones",
+    "dateFormatPlaceholder": "dd/mm/aaaa",
+    "pickDate": "Elegir fecha"
   },
   "accessibility": {
     "permissionsRequired": "Se Requieren Permisos de Accesibilidad",

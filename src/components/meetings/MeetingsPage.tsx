@@ -11,6 +11,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { AudioPlayer } from "../ui/AudioPlayer";
 import { HeadphonesNotice, MeetingContextPanel } from "./MeetingContextPanel";
 import { MeetingBotPanel } from "./MeetingBotPanel";
+import { formatUnixSeconds } from "@/utils/dayMonthYear";
 import {
   MeetingTranscriptView,
   formatDialogAsText,
@@ -70,11 +71,7 @@ function formatDuration(ms: number): string {
 }
 
 function formatStartedAt(ts: number): string {
-  const d = new Date(ts * 1000);
-  return d.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return formatUnixSeconds(ts);
 }
 
 function InlineTitle({

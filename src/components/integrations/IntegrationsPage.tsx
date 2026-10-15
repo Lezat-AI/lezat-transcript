@@ -18,6 +18,7 @@ import {
   Clock,
   LogIn,
 } from "lucide-react";
+import { DayMonthYearInput } from "@/components/ui/DayMonthYearInput";
 
 interface IntegrationConfig {
   database_id: string | null;
@@ -622,12 +623,13 @@ function TimesheetCard() {
                     <label className="text-xs font-medium text-mid-gray shrink-0 w-32">
                       {t("integrations.timesheet.date")}
                     </label>
-                    <input
-                      type="date"
-                      value={entryDate}
-                      onChange={(e) => setEntryDate(e.target.value)}
-                      className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-mid-gray/20 bg-transparent"
-                    />
+                    <div className="flex-1">
+                      <DayMonthYearInput
+                        value={entryDate}
+                        onChange={setEntryDate}
+                        className="px-3 py-1.5 text-sm rounded-lg border border-mid-gray/20 bg-transparent"
+                      />
+                    </div>
                   </div>
 
                   {/* Hours — friendly input */}
