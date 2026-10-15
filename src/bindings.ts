@@ -1441,6 +1441,7 @@ timesheet_task_entries?: Partial<{ [key in string]: number }> }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
+export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type BoardMatch = { 
 /**
  * "same": it is that card. "possible": maybe; the user decides.
@@ -1454,7 +1455,6 @@ status?: string | null; assignee_name?: string | null;
  * The card's current due date (YYYY-MM-DD).
  */
 due_date?: string | null; project?: string | null }
-export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CloudActionItem = { id: string; meeting_id: string | null; meeting_title: string | null; description: string | null; assignee: string | null; 
 /**
@@ -1532,10 +1532,6 @@ export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
- * Emitted once the calendar lookup for a meeting finishes.
- */
-export type MeetingCalendarContextEvent = { meeting_id: number; calendar_event_id: string | null; calendar_event_title: string | null; participants: MeetingParticipant[] }
-/**
  * The notetaker bot sent to a meeting link (Google Meet, Teams, Zoom). The
  * host admits it; when the meeting ends the backend extracts the tasks.
  */
@@ -1554,6 +1550,10 @@ status: string; error: string | null; meeting_id: string | null; action_items_co
  * Recent bots of the user, and whether the server can send bots at all.
  */
 export type MeetingBotList = { enabled: boolean; bots: MeetingBot[] }
+/**
+ * Emitted once the calendar lookup for a meeting finishes.
+ */
+export type MeetingCalendarContextEvent = { meeting_id: number; calendar_event_id: string | null; calendar_event_title: string | null; participants: MeetingParticipant[] }
 export type MeetingChunk = { 
 /**
  * ms offset from meeting start
