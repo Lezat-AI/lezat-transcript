@@ -9,6 +9,7 @@ import {
   type NotionPersonOption,
   TASK_TYPE_PENDING,
   TASK_TYPE_PREVIOUS,
+  EFFORT_LEVELS,
   WORK_TYPES,
 } from "./shared";
 import { DayMonthYearInput } from "@/components/ui/DayMonthYearInput";
@@ -26,6 +27,8 @@ export interface TaskDraft {
   task_type: string;
   /** One of `WORK_TYPES`, or "" when not classified. */
   work_type: string;
+  /** One of `EFFORT_LEVELS`, or "" when not estimated. */
+  effort: string;
 }
 
 // Select values that aren't Notion user ids.
@@ -67,6 +70,7 @@ export function makeDraft(
         ? TASK_TYPE_PREVIOUS
         : TASK_TYPE_PENDING,
     work_type: item.work_type ?? "",
+    effort: item.effort ?? "",
   };
 }
 
@@ -107,7 +111,9 @@ export function draftEdits(draft: TaskDraft, item: CloudActionItem): ItemEdits {
       ? TASK_TYPE_PREVIOUS
       : TASK_TYPE_PENDING;
   if (draft.task_type !== savedType) changed.task_type = draft.task_type;
-  if (draft.work_type !== (item.work_type ?? "")) changed.work_type = draft.work_type;
+  if (draft.work_type !== (item.work_type ?? ""))
+    changed.work_type = draft.work_type;
+  if (draft.effort !== (item.effort ?? "")) changed.effort = draft.effort;
   return changed;
 }
 
@@ -130,6 +136,7 @@ export function applyEdits(
   if (edits.due_date != null) next.due_date = edits.due_date || null;
   if (edits.task_type != null) next.task_type = edits.task_type;
   if (edits.work_type != null) next.work_type = edits.work_type || null;
+  if (edits.effort != null) next.effort = edits.effort || null;
   return next;
 }
 
@@ -142,7 +149,8 @@ export function draftProblem(
     // The title names the Notion card: it can be reworded, not removed.
     if (item.title?.trim()) return "actionItems.edit.titleRequired";
     // An old task without a title is only its description: it can't be left empty.
-    if (!draft.description.trim()) return "actionItems.edit.descriptionRequired";
+    if (!draft.description.trim())
+      return "actionItems.edit.descriptionRequired";
   }
   if (draft.due_date && !/^\d{4}-\d{2}-\d{2}$/.test(draft.due_date)) {
     return "actionItems.edit.invalidDate";
@@ -291,6 +299,25 @@ export function TaskFields({
             {WORK_TYPES.map((key) => (
               <option key={key} value={key}>
                 {t(`actionItems.workType.${key}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* Size of the task: the team's open effort per person */}
+        <label className="flex-1 min-w-[120px] flex flex-col gap-1">
+          <span className={fieldLabel}>{t("actionItems.effort.label")}</span>
+          <select
+            value={draft.effort}
+            onChange={(e) => onChange({ effort: e.target.value })}
+            disabled={disabled}
+            title={t("actionItems.effort.hint")}
+            className={`${fieldInput} border-mid-gray/15 focus:border-lezat-sage/50`}
+          >
+            <option value="">{t("actionItems.effort.none")}</option>
+            {EFFORT_LEVELS.map((key) => (
+              <option key={key} value={key}>
+                {t(`actionItems.effort.${key}`)}
               </option>
             ))}
           </select>

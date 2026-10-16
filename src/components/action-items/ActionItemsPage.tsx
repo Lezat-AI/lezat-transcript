@@ -880,6 +880,16 @@ const ActionItemRow = React.memo(function ActionItemRow({
               {t(`actionItems.workType.${item.work_type}`, { defaultValue: item.work_type })}
             </span>
           )}
+          {item.effort && (
+            <span
+              className="px-1.5 py-0.5 rounded-full bg-mid-gray/10 text-[10px] font-medium"
+              title={t("actionItems.effort.label")}
+            >
+              {t("actionItems.effort.badge", {
+                level: t(`actionItems.effort.${item.effort}`, { defaultValue: item.effort }),
+              })}
+            </span>
+          )}
           {isPending && item.board_match && (
             <span
               className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${

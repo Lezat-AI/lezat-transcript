@@ -26,6 +26,8 @@ export interface CloudActionItem {
   board_match?: BoardMatch | null;
   /** Kind of work (one of `WORK_TYPES`), null when not classified. */
   work_type?: string | null;
+  /** Size of the task (one of `EFFORT_LEVELS`), null when not estimated. */
+  effort?: string | null;
   /** `due_date` is the team default (next Monday): nobody said a date. */
   due_date_defaulted?: boolean;
 }
@@ -69,6 +71,8 @@ export interface ItemEdits {
   notion_existing_page_id?: string;
   /** One of `WORK_TYPES`; "" clears it. */
   work_type?: string;
+  /** One of `EFFORT_LEVELS`; "" clears it. */
+  effort?: string;
 }
 
 export interface PreloadedConfig {
@@ -88,6 +92,9 @@ export const WORK_TYPES = [
   "marketing",
   "interno",
 ] as const;
+
+/** How big a task is for its owner, the team board's "Esfuerzo" (labels: `actionItems.effort.<key>`). */
+export const EFFORT_LEVELS = ["bajo", "medio", "alto"] as const;
 
 export const TASK_TYPE_PENDING = "pending";
 export const TASK_TYPE_PREVIOUS = "completed_previous";

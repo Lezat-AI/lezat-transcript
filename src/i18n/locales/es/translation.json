@@ -825,6 +825,15 @@
       "entregar": "Entregar",
       "marketing": "Marketing",
       "interno": "Interno"
+    },
+    "effort": {
+      "label": "Esfuerzo",
+      "hint": "Qué tan grande es la tarea para quien la hace (el Esfuerzo del tablero): sirve para ver la carga abierta de cada persona.",
+      "none": "Sin estimar",
+      "bajo": "Bajo",
+      "medio": "Medio",
+      "alto": "Alto",
+      "badge": "Esfuerzo: {{level}}"
     }
   },
   "integrations": {

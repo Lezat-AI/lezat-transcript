@@ -1508,6 +1508,12 @@ board_match?: BoardMatch | null;
  */
 work_type?: string | null; 
 /**
+ * Size of the task for its owner: "bajo" | "medio" | "alto"; `None` = not
+ * estimated. Editable through `update_action_item` edits as
+ * `{"effort": "..."}` (`""` clears it).
+ */
+effort?: string | null; 
+/**
  * `due_date` is the team default (next Monday): nobody said a date.
  */
 due_date_defaulted?: boolean }

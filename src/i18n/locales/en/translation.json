@@ -825,6 +825,15 @@
       "entregar": "Deliver",
       "marketing": "Marketing",
       "interno": "Internal"
+    },
+    "effort": {
+      "label": "Effort",
+      "hint": "How big the task is for its owner (the board's Esfuerzo): shows each person's open load.",
+      "none": "Not estimated",
+      "bajo": "Low",
+      "medio": "Medium",
+      "alto": "High",
+      "badge": "Effort: {{level}}"
     }
   },
   "integrations": {

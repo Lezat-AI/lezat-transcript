@@ -143,6 +143,11 @@ pub struct CloudActionItem {
     /// edits as `{"work_type": "..."}` (`""` clears it).
     #[serde(default)]
     pub work_type: Option<String>,
+    /// Size of the task for its owner: "bajo" | "medio" | "alto"; `None` = not
+    /// estimated. Editable through `update_action_item` edits as
+    /// `{"effort": "..."}` (`""` clears it).
+    #[serde(default)]
+    pub effort: Option<String>,
     /// `due_date` is the team default (next Monday): nobody said a date.
     #[serde(default)]
     pub due_date_defaulted: bool,
