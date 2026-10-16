@@ -1,5 +1,11 @@
 /* eslint-disable i18next/no-literal-string */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
@@ -20,6 +26,7 @@ import {
 import {
   commands,
   events,
+  type CloudTranscription,
   type HistoryEntry,
   type HistoryUpdatePayload,
   type MeetingChunk,
@@ -45,7 +52,9 @@ import { formatUnixSeconds } from "@/utils/dayMonthYear";
 /// (audio playback, retry transcription, star, download, dialog view) live
 /// here so users don't have to remember which tab to open.
 
-type LibraryKind = "dictation" | "meeting";
+/// "bot": a meeting the Lezat Notetaker transcribed on the server; it was
+/// never recorded on this computer, so it only has the text (no audio).
+type LibraryKind = "dictation" | "meeting" | "bot";
 
 interface LibraryItem {
   kind: LibraryKind;
@@ -66,6 +75,8 @@ interface LibraryItem {
   /// For dictations only: original transcription text (post-process variant
   /// is what `transcript` holds when present).
   transcription_text?: string;
+  /// For bot meetings only: what each person said, in order.
+  lines?: { speaker: string; text: string }[];
 }
 
 type Filter = "all" | "dictation" | "meeting";
@@ -93,6 +104,30 @@ function fromMeeting(rec: MeetingRecord): LibraryItem {
     transcript: rec.transcript_text || "",
     audio_path: rec.audio_path,
     chunks: rec.chunks ?? [],
+  };
+}
+
+/// Bot meetings are ingested as device "attendee" (see the backend).
+const BOT_MEETING_PREFIX = "local-attendee-";
+
+function fromBotTranscription(
+  t: CloudTranscription,
+  index: number,
+): LibraryItem {
+  const transcript = t.transcript_text ?? "";
+  const lines = transcript
+    .split("\n")
+    .map((line) => /^([^:\n]{1,80}):\s*(.*)$/.exec(line))
+    .filter((m): m is RegExpExecArray => Boolean(m && m[2].trim()))
+    .map((m) => ({ speaker: m[1].trim(), text: m[2].trim() }));
+  return {
+    kind: "bot",
+    // Not a local id: only used as a list key.
+    id: -(index + 1),
+    title: t.meeting_title || "Reunión",
+    timestamp: Math.floor(Date.parse(t.received_at) / 1000),
+    transcript,
+    lines,
   };
 }
 
@@ -146,12 +181,16 @@ export function LibraryPage() {
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
-    const [histRes, meetingsRes] = await Promise.all([
+    const [histRes, meetingsRes, cloudRes] = await Promise.all([
       commands.getHistoryEntries(null, 500).catch(() => ({
         status: "error" as const,
         error: "fetch failed",
       })),
       commands.listMeetings(500).catch(() => ({
+        status: "error" as const,
+        error: "fetch failed",
+      })),
+      commands.cloudGetTranscriptions().catch(() => ({
         status: "error" as const,
         error: "fetch failed",
       })),
@@ -162,7 +201,18 @@ export function LibraryPage() {
     const meetings: LibraryItem[] =
       meetingsRes.status === "ok" ? meetingsRes.data.map(fromMeeting) : [];
 
-    const merged = [...dictations, ...meetings].sort(
+    const botMeetings: LibraryItem[] =
+      cloudRes.status === "ok"
+        ? cloudRes.data.items
+            .filter(
+              (t) =>
+                (t.meeting_id ?? "").startsWith(BOT_MEETING_PREFIX) &&
+                Boolean(t.transcript_text),
+            )
+            .map(fromBotTranscription)
+        : [];
+
+    const merged = [...dictations, ...meetings, ...botMeetings].sort(
       (a, b) => b.timestamp - a.timestamp,
     );
     setItems(merged);
@@ -174,12 +224,9 @@ export function LibraryPage() {
 
   // Auto-refresh when cloud sync completes (title may have been renamed).
   useEffect(() => {
-    const p = listen<{ state: string }>(
-      "cloud-sync-event",
-      (evt) => {
-        if (evt.payload.state === "success") refresh();
-      },
-    );
+    const p = listen<{ state: string }>("cloud-sync-event", (evt) => {
+      if (evt.payload.state === "success") refresh();
+    });
     return () => {
       p.then((fn) => fn()).catch(() => undefined);
     };
@@ -199,14 +246,20 @@ export function LibraryPage() {
       listen("meeting-transcript-chunk-event", () => refresh()),
     ];
     return () => {
-      unsubs.forEach((p) => p.then((fn: () => void) => fn()).catch(() => undefined));
+      unsubs.forEach((p) =>
+        p.then((fn: () => void) => fn()).catch(() => undefined),
+      );
     };
   }, [refresh]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items
-      .filter((it) => (filter === "all" ? true : it.kind === filter))
+      .filter((it) =>
+        filter === "all"
+          ? true
+          : it.kind === filter || (filter === "meeting" && it.kind === "bot"),
+      )
       .filter((it) => {
         if (!q) return true;
         return (
@@ -218,7 +271,9 @@ export function LibraryPage() {
 
   const counts = useMemo(() => {
     const dict = items.filter((i) => i.kind === "dictation").length;
-    const meet = items.filter((i) => i.kind === "meeting").length;
+    const meet = items.filter(
+      (i) => i.kind === "meeting" || i.kind === "bot",
+    ).length;
     return { all: items.length, dictation: dict, meeting: meet };
   }, [items]);
 
@@ -442,23 +497,30 @@ export function LibraryPage() {
                       <Download className="w-4 h-4" />
                     </button>
                   )}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(item);
-                    }}
-                    className="ml-1 p-1 text-mid-gray hover:text-red-500 shrink-0"
-                    title="Eliminar"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {item.kind !== "bot" && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(item);
+                      }}
+                      className="ml-1 p-1 text-mid-gray hover:text-red-500 shrink-0"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
                 {isOpen && (
                   <div className="px-4 pb-4 pt-2 bg-mid-gray/5 flex flex-col gap-3">
                     {/* Transcript area: meetings get the dialog/plain
                         toggle, dictations get plain text. */}
-                    {item.kind === "meeting" ? (
+                    {item.kind === "bot" ? (
+                      <BotTranscript
+                        lines={item.lines ?? []}
+                        text={item.transcript}
+                      />
+                    ) : item.kind === "meeting" ? (
                       <>
                         <MeetingTranscriptView
                           chunks={item.chunks ?? []}
@@ -505,8 +567,16 @@ export function LibraryPage() {
                           Audio
                         </h4>
                         {[
-                          { label: "Micrófono (TÚ)", track: "mic" as const, file: "mic.wav" },
-                          { label: "Audio del sistema (ELLOS)", track: "system" as const, file: "system.wav" },
+                          {
+                            label: "Micrófono (TÚ)",
+                            track: "mic" as const,
+                            file: "mic.wav",
+                          },
+                          {
+                            label: "Audio del sistema (ELLOS)",
+                            track: "system" as const,
+                            file: "system.wav",
+                          },
                         ].map((s) => {
                           const join = (a: string, b: string) =>
                             a.endsWith("/") ? a + b : a + "/" + b;
@@ -514,7 +584,10 @@ export function LibraryPage() {
                             join(item.audio_path!, s.file),
                           );
                           return (
-                            <div key={s.label} className="flex items-center gap-3">
+                            <div
+                              key={s.label}
+                              className="flex items-center gap-3"
+                            >
                               <span className="text-xs text-mid-gray w-40 shrink-0">
                                 {s.label}
                               </span>
@@ -565,11 +638,17 @@ export function LibraryPage() {
                           onClick={async () => {
                             setSyncingIds((prev) => new Set(prev).add(item.id));
                             try {
-                              const res = await (commands as any).cloudSyncMeeting(item.id);
+                              const res = await (
+                                commands as any
+                              ).cloudSyncMeeting(item.id);
                               if (res.status === "ok") {
-                                toast.success("Sincronizando reunión en segundo plano…");
+                                toast.success(
+                                  "Sincronizando reunión en segundo plano…",
+                                );
                               } else {
-                                toast.error(`Error de sincronización: ${res.error}`);
+                                toast.error(
+                                  `Error de sincronización: ${res.error}`,
+                                );
                               }
                             } catch (e) {
                               toast.error(`Error de sincronización: ${e}`);
@@ -589,7 +668,9 @@ export function LibraryPage() {
                           ) : (
                             <Cloud className="w-3 h-3" />
                           )}
-                          {syncingIds.has(item.id) ? "Sincronizando…" : "Sincronizar a la nube"}
+                          {syncingIds.has(item.id)
+                            ? "Sincronizando…"
+                            : "Sincronizar a la nube"}
                         </button>
                       )}
 
@@ -618,7 +699,9 @@ export function LibraryPage() {
                                 "w-3 h-3 " + (isRetrying ? "animate-spin" : "")
                               }
                             />
-                            {isRetrying ? "Reintentando…" : "Reintentar transcripción"}
+                            {isRetrying
+                              ? "Reintentando…"
+                              : "Reintentar transcripción"}
                           </button>
                         </>
                       )}
@@ -634,7 +717,48 @@ export function LibraryPage() {
   );
 }
 
+/// A bot meeting as a conversation: each line with who said it.
+function BotTranscript({
+  lines,
+  text,
+}: {
+  lines: { speaker: string; text: string }[];
+  text: string;
+}) {
+  if (lines.length === 0) {
+    return (
+      <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
+        {text}
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2 max-h-96 overflow-y-auto text-sm leading-relaxed">
+      <p className="text-xs text-mid-gray">
+        Transcrita por Lezat Notetaker en la reunión (sin audio en este equipo).
+      </p>
+      {lines.map((line, i) => (
+        <div key={i}>
+          {(i === 0 || lines[i - 1].speaker !== line.speaker) && (
+            <div className="text-xs font-semibold text-lezat-sage mt-1">
+              {line.speaker}
+            </div>
+          )}
+          <div>{line.text}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TypeChip({ kind }: { kind: LibraryKind }) {
+  if (kind === "bot") {
+    return (
+      <span className="shrink-0 text-[9px] font-bold tracking-widest uppercase py-0.5 px-1.5 rounded bg-blue-500/15 text-blue-500">
+        BOT
+      </span>
+    );
+  }
   if (kind === "meeting") {
     return (
       <span className="shrink-0 text-[9px] font-bold tracking-widest uppercase py-0.5 px-1.5 rounded bg-lezat-sage/20 text-lezat-sage">
