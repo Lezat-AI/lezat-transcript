@@ -52,7 +52,7 @@ import { formatUnixSeconds } from "@/utils/dayMonthYear";
 /// (audio playback, retry transcription, star, download, dialog view) live
 /// here so users don't have to remember which tab to open.
 
-/// "bot": a meeting the Lezat Notetaker transcribed on the server; it was
+/// "bot": a meeting NoteZat (Lezat's notetaker) transcribed on the server; it was
 /// never recorded on this computer, so it only has the text (no audio).
 type LibraryKind = "dictation" | "meeting" | "bot";
 
@@ -778,6 +778,7 @@ function BotTranscript({
   lines: { speaker: string; text: string }[];
   text: string;
 }) {
+  const { t } = useTranslation();
   if (lines.length === 0) {
     return (
       <div className="text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
@@ -788,7 +789,7 @@ function BotTranscript({
   return (
     <div className="flex flex-col gap-2 max-h-96 overflow-y-auto text-sm leading-relaxed">
       <p className="text-xs text-mid-gray">
-        Transcrita por Lezat Notetaker en la reunión (sin audio en este equipo).
+        {t("meetingBot.transcribedBy")}
       </p>
       {lines.map((line, i) => (
         <div key={i}>

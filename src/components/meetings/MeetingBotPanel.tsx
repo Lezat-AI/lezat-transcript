@@ -60,7 +60,7 @@ function statusTone(bot: MeetingBot): string {
   return "text-blue-500";
 }
 
-/// Sends the "Lezat Notetaker" bot to a Meet/Teams/Zoom link: the host admits
+/// Sends the NoteZat bot to a Meet/Teams/Zoom link: the host admits
 /// it and, when the meeting ends, its tasks show up for review like those of
 /// a recording, without anyone pressing record.
 export function MeetingBotPanel() {

@@ -937,7 +937,7 @@
     "syncSynced": "Subida"
   },
   "meetingBot": {
-    "title": "Enviar Lezat Notetaker",
+    "title": "Enviar NoteZat",
     "description": "El bot entra a la reunión como un participante y la transcribe por ti. Al terminar, las tareas aparecen para revisar, sin que nadie tenga que grabar.",
     "urlPlaceholder": "Link de Google Meet, Teams o Zoom",
     "titlePlaceholder": "Nombre de la reunión (opcional)",
@@ -968,6 +968,7 @@
       "noUpcoming": "No tienes reuniones con link en las próximas 24 horas.",
       "botJoins": "Entra el bot",
       "noBot": "Sin bot"
-    }
+    },
+    "transcribedBy": "Transcrita en la reunión por NoteZat, el asistente de notas de Lezat (sin audio en este equipo)."
   }
 }
