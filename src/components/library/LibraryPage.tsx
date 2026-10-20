@@ -160,6 +160,43 @@ async function downloadMeetingAudio(
   }
 }
 
+/// "[Weekly] Status Proyectos 2026-10-20.txt": no characters a file system rejects.
+function transcriptFileName(item: LibraryItem): string {
+  const date = new Date(item.timestamp * 1000);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const title =
+    item.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Transcripción";
+  return `${title} ${day}.txt`;
+}
+
+async function downloadTranscript(
+  item: LibraryItem,
+  body: string,
+): Promise<void> {
+  const dest = await save({
+    defaultPath: transcriptFileName(item),
+    filters: [{ name: "Texto", extensions: ["txt", "md"] }],
+  });
+  if (!dest) return;
+  const header = [
+    item.title,
+    formatWhen(item.timestamp) +
+      (item.duration_ms !== undefined
+        ? ` · ${formatDuration(item.duration_ms)}`
+        : ""),
+  ].join("\n");
+  const res = await commands.exportTranscriptText(
+    dest,
+    `${header}\n\n${body}\n`,
+  );
+  if (res.status === "error") {
+    toast.error(`No se pudo guardar la transcripción: ${res.error}`);
+  } else {
+    toast.success("Transcripción descargada");
+  }
+}
+
 export function LibraryPage() {
   const osType = useOsType();
   const { t } = useTranslation();
@@ -289,20 +326,22 @@ export function LibraryPage() {
     refresh();
   };
 
+  /// The transcript as shown on screen (meetings follow the chosen view).
+  const transcriptText = (item: LibraryItem): string =>
+    item.kind === "meeting"
+      ? formatTranscriptForCopy(
+          item.chunks ?? [],
+          meetingViewMode,
+          {
+            mic: t("transcriptView.speakers.mic"),
+            system: t("transcriptView.speakers.system"),
+          },
+          item.transcript,
+        )
+      : item.transcript;
+
   const handleCopy = (item: LibraryItem) => {
-    const text =
-      item.kind === "meeting"
-        ? formatTranscriptForCopy(
-            item.chunks ?? [],
-            meetingViewMode,
-            {
-              mic: t("transcriptView.speakers.mic"),
-              system: t("transcriptView.speakers.system"),
-            },
-            item.transcript,
-          )
-        : item.transcript;
-    navigator.clipboard?.writeText(text).catch(() => undefined);
+    navigator.clipboard?.writeText(transcriptText(item)).catch(() => undefined);
     setCopiedId(item.id);
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     copyTimerRef.current = setTimeout(() => setCopiedId(null), 1500);
@@ -631,6 +670,20 @@ export function LibraryPage() {
                         (item.chunks?.length ?? 0) > 0
                           ? t(`transcriptView.modes.${meetingViewMode}.copy`)
                           : t("transcriptView.copyTranscript")}
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          downloadTranscript(item, transcriptText(item)).catch(
+                            (err) =>
+                              console.warn("transcript download failed", err),
+                          )
+                        }
+                        disabled={!item.transcript}
+                        className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40 inline-flex items-center gap-1"
+                      >
+                        <Download className="w-3 h-3" />
+                        Descargar transcripción
                       </button>
 
                       {item.kind === "meeting" && (

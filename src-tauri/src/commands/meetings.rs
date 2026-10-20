@@ -174,3 +174,29 @@ pub fn export_meeting_audio(
     std::fs::copy(&src, &dest).map_err(|e| format!("Copy failed: {e}"))?;
     Ok(())
 }
+
+/// Save a transcript (already formatted by the frontend, as shown on screen)
+/// to a path the user picked via a save-as dialog. Done in Rust for the same
+/// reason as `export_meeting_audio`. Only plain-text files are written.
+#[tauri::command]
+#[specta::specta]
+pub fn export_transcript_text(destination: String, contents: String) -> Result<(), String> {
+    let dest = std::path::PathBuf::from(&destination);
+    let is_text = dest
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("txt") || e.eq_ignore_ascii_case("md"));
+    if !is_text {
+        return Err("The transcript must be saved as a .txt or .md file".to_string());
+    }
+    if let Some(parent) = dest.parent() {
+        if !parent.exists() {
+            return Err(format!(
+                "Destination directory does not exist: {}",
+                parent.display()
+            ));
+        }
+    }
+    std::fs::write(&dest, contents).map_err(|e| format!("Write failed: {e}"))?;
+    Ok(())
+}

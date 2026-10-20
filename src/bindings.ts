@@ -903,6 +903,19 @@ async exportMeetingAudio(id: number, track: string, destination: string) : Promi
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Save a transcript (already formatted by the frontend, as shown on screen)
+ * to a path the user picked via a save-as dialog. Done in Rust for the same
+ * reason as `export_meeting_audio`. Only plain-text files are written.
+ */
+async exportTranscriptText(destination: string, contents: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_transcript_text", { destination, contents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getSystemAudioAvailability() : Promise<SystemAudioAvailability> {
     return await TAURI_INVOKE("get_system_audio_availability");
 },

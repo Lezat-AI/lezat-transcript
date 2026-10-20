@@ -446,6 +446,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::delete_meeting,
             commands::meetings::rename_meeting,
             commands::meetings::export_meeting_audio,
+            commands::meetings::export_transcript_text,
             commands::meetings::get_system_audio_availability,
             commands::meetings::set_meeting_participants,
             commands::meetings::get_output_device_hint,
