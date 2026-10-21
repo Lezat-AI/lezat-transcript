@@ -229,6 +229,61 @@ fn get_filler_words_for_language(lang: &str) -> &'static [&'static str] {
 
 static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
 
+// Lezat's product names end in "Zat" (MediaZat, HealthZat...) and speech-to-text
+// hears it as "Sat". Same rules as the backend's brand_spelling.py.
+static LEZAT_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bl[eé](?:s{1,2}|z{1,2})at{1,2}\b").unwrap());
+// Joined forms: "HealthSat", "housezat". At least three letters before the ending
+// so "sat" alone and "Lezat" are not touched.
+static ZAT_ENDING_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b([^\W\d_]{3,})[sz]at{1,2}\b").unwrap());
+// Split forms: "Health Sat", "House zat". Lowercase "sat" (English verb) and
+// "SAT" (Mexican tax office) stay.
+static SPLIT_ZAT_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b([^\W\d_]{3,})[ \-](?:Sat|[Zz]at)\b").unwrap());
+static SATELLITE_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bsat[eé]lites?\b|\bsatellites?\b").unwrap());
+static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^.!?\n]*[.!?\n]*").unwrap());
+
+/// Words before a plain "Sat" that is not a product ("they Sat", "para Sat").
+const NOT_A_ZAT_STEM: &[&str] = &[
+    "the", "they", "she", "you", "who", "and", "then", "also", "just", "has", "had", "have", "was",
+    "were", "our", "their", "this", "that", "los", "las", "del", "con", "por", "una", "que",
+    "para", "sobre", "este", "esta", "ese", "esa",
+];
+
+fn zat_name(stem: &str) -> String {
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}Zat", first.to_uppercase(), chars.as_str()),
+        None => "Zat".to_string(),
+    }
+}
+
+/// Writes Lezat's company and product names with "Zat", never "Sat"
+/// ("Lesat" -> "Lezat", "Health Sat" -> "HealthZat"). A sentence about
+/// satellites keeps its "-sat" names (Hispasat, Landsat).
+pub fn apply_brand_spelling(text: &str) -> String {
+    SENTENCE_PATTERN
+        .replace_all(text, |caps: &regex::Captures| {
+            let sentence = LEZAT_PATTERN.replace_all(&caps[0], "Lezat");
+            if SATELLITE_PATTERN.is_match(&sentence) {
+                return sentence.into_owned();
+            }
+            let joined = SPLIT_ZAT_PATTERN.replace_all(&sentence, |c: &regex::Captures| {
+                if NOT_A_ZAT_STEM.contains(&c[1].to_lowercase().as_str()) {
+                    c[0].to_string()
+                } else {
+                    zat_name(&c[1])
+                }
+            });
+            ZAT_ENDING_PATTERN
+                .replace_all(&joined, |c: &regex::Captures| zat_name(&c[1]))
+                .into_owned()
+        })
+        .into_owned()
+}
+
 /// Well-known Whisper hallucination patterns.  When the model receives silence
 /// or very low-level noise it tends to produce stock phrases from its training
 /// data (YouTube intros/outros, subtitling boilerplate, etc.).  Matching is
@@ -379,6 +434,45 @@ pub fn filter_transcription_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_brand_spelling_uses_zat() {
+        let cases = [
+            ("marketing de Lesat", "marketing de Lezat"),
+            ("el demo de MediaSat", "el demo de MediaZat"),
+            ("HealthSat y Health Sat", "HealthZat y HealthZat"),
+            (
+                "el piloto de House zat y House-Sat",
+                "el piloto de HouseZat y HouseZat",
+            ),
+            ("housesat", "HouseZat"),
+            ("HealthZat ya está bien", "HealthZat ya está bien"),
+            (
+                "Hablamos del satélite Landsat. Luego vimos CoachSat.",
+                "Hablamos del satélite Landsat. Luego vimos CoachZat.",
+            ),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(apply_brand_spelling(raw), expected, "input: {raw}");
+        }
+    }
+
+    #[test]
+    fn test_brand_spelling_leaves_real_words_alone() {
+        for text in [
+            "the people sat down",
+            "they Sat down",
+            "la factura del SAT",
+            "nos vemos el Sat",
+            "sat",
+            "Mazatlán",
+            "satisfecho",
+            "la lesión del jugador",
+            "",
+        ] {
+            assert_eq!(apply_brand_spelling(text), text);
+        }
+    }
 
     #[test]
     fn test_apply_custom_words_exact_match() {

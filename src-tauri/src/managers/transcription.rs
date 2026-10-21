@@ -1,4 +1,4 @@
-use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
+use crate::audio_toolkit::{apply_brand_spelling, apply_custom_words, filter_transcription_output};
 use crate::cloud_transcription;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -799,7 +799,7 @@ impl TranscriptionManager {
             translation_note
         );
 
-        let final_result = filtered_result;
+        let final_result = apply_brand_spelling(&filtered_result);
 
         if final_result.is_empty() {
             info!("Transcription result is empty");
