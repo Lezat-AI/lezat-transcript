@@ -2,7 +2,7 @@
 /// entries (who spoke, when, what), so a meeting reads the same in a .txt, a
 /// Word document or a subtitle file.
 
-export type TranscriptFormat = "txt" | "md" | "docx" | "srt" | "vtt";
+export type TranscriptFormat = "txt" | "md" | "docx" | "pdf" | "srt" | "vtt";
 
 export interface TranscriptEntry {
   speaker?: string;
@@ -36,6 +36,11 @@ export const TRANSCRIPT_FORMATS: {
     format: "docx",
     label: "Word (.docx)",
     hint: "Para editar, compartir o imprimir",
+  },
+  {
+    format: "pdf",
+    label: "PDF (.pdf)",
+    hint: "Para enviar o imprimir tal cual",
   },
   { format: "md", label: "Markdown (.md)", hint: "Para Notion, Obsidian o IA" },
   {

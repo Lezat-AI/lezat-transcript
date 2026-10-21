@@ -14,6 +14,7 @@ mod input;
 mod llm_client;
 mod managers;
 mod overlay;
+mod pdf;
 pub mod portable;
 mod settings;
 mod shortcut;
@@ -449,6 +450,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::export_meeting_audio,
             commands::meetings::export_transcript_text,
             commands::meetings::export_transcript_docx,
+            commands::meetings::export_transcript_pdf,
             commands::meetings::get_system_audio_availability,
             commands::meetings::set_meeting_participants,
             commands::meetings::get_output_device_hint,

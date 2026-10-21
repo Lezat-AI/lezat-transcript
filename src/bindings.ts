@@ -929,6 +929,17 @@ async exportTranscriptDocx(destination: string, title: string, subtitle: string,
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Save a transcript as a PDF, with the same layout as the Word document.
+ */
+async exportTranscriptPdf(destination: string, title: string, subtitle: string, paragraphs: DocxParagraph[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_transcript_pdf", { destination, title, subtitle, paragraphs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getSystemAudioAvailability() : Promise<SystemAudioAvailability> {
     return await TAURI_INVOKE("get_system_audio_availability");
 },

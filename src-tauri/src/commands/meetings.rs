@@ -227,3 +227,22 @@ pub fn export_transcript_docx(
     std::fs::write(&dest, bytes).map_err(|e| format!("Write failed: {e}"))?;
     Ok(())
 }
+
+/// Save a transcript as a PDF, with the same layout as the Word document.
+#[tauri::command]
+#[specta::specta]
+pub fn export_transcript_pdf(
+    destination: String,
+    title: String,
+    subtitle: String,
+    paragraphs: Vec<crate::docx::DocxParagraph>,
+) -> Result<(), String> {
+    let dest = std::path::PathBuf::from(&destination);
+    if !has_extension(&dest, &["pdf"]) {
+        return Err("The document must be saved as a .pdf file".to_string());
+    }
+    ensure_parent_exists(&dest)?;
+    let bytes = crate::pdf::build_pdf(&title, &subtitle, &paragraphs);
+    std::fs::write(&dest, bytes).map_err(|e| format!("Write failed: {e}"))?;
+    Ok(())
+}

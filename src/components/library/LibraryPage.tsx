@@ -230,23 +230,31 @@ async function downloadTranscript(
     filters: [{ name: option?.label ?? format, extensions: [format] }],
   });
   if (!dest) return;
+  const paragraphs = doc.entries.map((e) => ({
+    label: entryLabel(e) || null,
+    text: e.text,
+  }));
   const res =
     format === "docx"
       ? await commands.exportTranscriptDocx(
           dest,
           doc.title,
           doc.subtitle,
-          doc.entries.map((e) => ({
-            label: entryLabel(e) || null,
-            text: e.text,
-          })),
+          paragraphs,
         )
-      : await commands.exportTranscriptText(
-          dest,
-          { txt: toPlainText, md: toMarkdown, srt: toSrt, vtt: toVtt }[format](
-            doc,
-          ),
-        );
+      : format === "pdf"
+        ? await commands.exportTranscriptPdf(
+            dest,
+            doc.title,
+            doc.subtitle,
+            paragraphs,
+          )
+        : await commands.exportTranscriptText(
+            dest,
+            { txt: toPlainText, md: toMarkdown, srt: toSrt, vtt: toVtt }[
+              format
+            ](doc),
+          );
   if (res.status === "error") {
     toast.error(`No se pudo guardar la transcripción: ${res.error}`);
   } else {
