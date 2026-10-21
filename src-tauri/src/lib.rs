@@ -8,6 +8,7 @@ mod clipboard;
 pub mod cloud_sync;
 mod cloud_transcription;
 mod commands;
+mod docx;
 mod helpers;
 mod input;
 mod llm_client;
@@ -447,6 +448,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meetings::rename_meeting,
             commands::meetings::export_meeting_audio,
             commands::meetings::export_transcript_text,
+            commands::meetings::export_transcript_docx,
             commands::meetings::get_system_audio_availability,
             commands::meetings::set_meeting_participants,
             commands::meetings::get_output_device_hint,

@@ -904,13 +904,26 @@ async exportMeetingAudio(id: number, track: string, destination: string) : Promi
 }
 },
 /**
- * Save a transcript (already formatted by the frontend, as shown on screen)
- * to a path the user picked via a save-as dialog. Done in Rust for the same
- * reason as `export_meeting_audio`. Only plain-text files are written.
+ * Save a transcript (already formatted by the frontend: plain text,
+ * Markdown or subtitles) to a path the user picked via a save-as dialog.
+ * Done in Rust for the same reason as `export_meeting_audio`. Only text
+ * formats are written.
  */
 async exportTranscriptText(destination: string, contents: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("export_transcript_text", { destination, contents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save a transcript as a Word document: `title`, a `subtitle` line (date,
+ * duration) and one paragraph per turn with its label in bold.
+ */
+async exportTranscriptDocx(destination: string, title: string, subtitle: string, paragraphs: DocxParagraph[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_transcript_docx", { destination, title, subtitle, paragraphs }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1545,6 +1558,14 @@ export type CompletedTask = { description: string; source_sentence: string | nul
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DailyReport = { id: string; meeting_id: string | null; meeting_title: string | null; meeting_date: string | null; person_reports?: PersonDailyReport[]; created_at: string | null }
 export type DailyReportsResponse = { reports: DailyReport[] }
+/**
+ * One paragraph of the exported transcript.
+ */
+export type DocxParagraph = { 
+/**
+ * Bold prefix, e.g. "[03:12] Daniela Botero". None for plain text.
+ */
+label: string | null; text: string }
 export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 export type GoogleLoginEvent = { state: "success"; user_email: string; user_name: string } | { state: "failed"; error: string }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }

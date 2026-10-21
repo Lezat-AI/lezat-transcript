@@ -175,28 +175,55 @@ pub fn export_meeting_audio(
     Ok(())
 }
 
-/// Save a transcript (already formatted by the frontend, as shown on screen)
-/// to a path the user picked via a save-as dialog. Done in Rust for the same
-/// reason as `export_meeting_audio`. Only plain-text files are written.
+/// Fails when the folder the user picked is gone (e.g. an unmounted drive).
+fn ensure_parent_exists(dest: &std::path::Path) -> Result<(), String> {
+    match dest.parent() {
+        Some(parent) if !parent.exists() => Err(format!(
+            "Destination directory does not exist: {}",
+            parent.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn has_extension(dest: &std::path::Path, allowed: &[&str]) -> bool {
+    dest.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| allowed.iter().any(|a| e.eq_ignore_ascii_case(a)))
+}
+
+/// Save a transcript (already formatted by the frontend: plain text,
+/// Markdown or subtitles) to a path the user picked via a save-as dialog.
+/// Done in Rust for the same reason as `export_meeting_audio`. Only text
+/// formats are written.
 #[tauri::command]
 #[specta::specta]
 pub fn export_transcript_text(destination: String, contents: String) -> Result<(), String> {
     let dest = std::path::PathBuf::from(&destination);
-    let is_text = dest
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("txt") || e.eq_ignore_ascii_case("md"));
-    if !is_text {
-        return Err("The transcript must be saved as a .txt or .md file".to_string());
+    if !has_extension(&dest, &["txt", "md", "srt", "vtt"]) {
+        return Err("The transcript must be saved as .txt, .md, .srt or .vtt".to_string());
     }
-    if let Some(parent) = dest.parent() {
-        if !parent.exists() {
-            return Err(format!(
-                "Destination directory does not exist: {}",
-                parent.display()
-            ));
-        }
-    }
+    ensure_parent_exists(&dest)?;
     std::fs::write(&dest, contents).map_err(|e| format!("Write failed: {e}"))?;
+    Ok(())
+}
+
+/// Save a transcript as a Word document: `title`, a `subtitle` line (date,
+/// duration) and one paragraph per turn with its label in bold.
+#[tauri::command]
+#[specta::specta]
+pub fn export_transcript_docx(
+    destination: String,
+    title: String,
+    subtitle: String,
+    paragraphs: Vec<crate::docx::DocxParagraph>,
+) -> Result<(), String> {
+    let dest = std::path::PathBuf::from(&destination);
+    if !has_extension(&dest, &["docx"]) {
+        return Err("The document must be saved as a .docx file".to_string());
+    }
+    ensure_parent_exists(&dest)?;
+    let bytes = crate::docx::build_docx(&title, &subtitle, &paragraphs);
+    std::fs::write(&dest, bytes).map_err(|e| format!("Write failed: {e}"))?;
     Ok(())
 }

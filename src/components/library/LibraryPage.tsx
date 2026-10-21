@@ -22,6 +22,7 @@ import {
   Copy,
   Cloud,
   Loader2,
+  ChevronDown,
 } from "lucide-react";
 import {
   commands,
@@ -40,12 +41,27 @@ import { AudioPlayer } from "../ui/AudioPlayer";
 import { Button } from "../ui/Button";
 import {
   MeetingTranscriptView,
+  buildDialogTurns,
+  buildSegments,
   formatTranscriptForCopy,
   loadTranscriptViewMode,
   saveTranscriptViewMode,
   type TranscriptViewMode,
 } from "../meetings/MeetingTranscriptView";
 import { formatUnixSeconds } from "@/utils/dayMonthYear";
+import {
+  TRANSCRIPT_FORMATS,
+  entryLabel,
+  hasTimes,
+  toMarkdown,
+  toPlainText,
+  toSrt,
+  toVtt,
+  transcriptFileName,
+  type TranscriptDocument,
+  type TranscriptEntry,
+  type TranscriptFormat,
+} from "@/lib/transcriptExport";
 
 /// Unified "Library" view — the single canonical browser for everything the
 /// app captures: dictations and meeting recordings. All power-user actions
@@ -160,41 +176,146 @@ async function downloadMeetingAudio(
   }
 }
 
-/// "[Weekly] Status Proyectos 2026-10-20.txt": no characters a file system rejects.
-function transcriptFileName(item: LibraryItem): string {
-  const date = new Date(item.timestamp * 1000);
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  const title =
-    item.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Transcripción";
-  return `${title} ${day}.txt`;
+/// The transcript as structured entries, following the chosen view for
+/// local meetings: dialog (turns with speaker), timeline (every segment with
+/// its time) or plain (turns, text only).
+function transcriptDocument(
+  item: LibraryItem,
+  mode: TranscriptViewMode,
+  labels: { mic: string; system: string },
+): TranscriptDocument {
+  let entries: TranscriptEntry[] = [];
+  const segments =
+    item.kind === "meeting" ? buildSegments(item.chunks ?? []) : [];
+  if (segments.length > 0) {
+    entries =
+      mode === "timeline"
+        ? segments.map((s) => ({
+            speaker: labels[s.source],
+            startMs: s.startMs,
+            text: s.text,
+          }))
+        : buildDialogTurns(segments).map((turn) => ({
+            speaker: mode === "dialog" ? labels[turn.source] : undefined,
+            text: turn.text,
+          }));
+  } else if (item.lines && item.lines.length > 0) {
+    entries = item.lines;
+  } else {
+    entries = item.transcript
+      .split(/\n\s*\n/)
+      .map((text) => ({ text: text.trim() }))
+      .filter((e) => e.text);
+  }
+  return {
+    title: item.title,
+    subtitle:
+      formatWhen(item.timestamp) +
+      (item.duration_ms !== undefined
+        ? ` · ${formatDuration(item.duration_ms)}`
+        : ""),
+    entries,
+    durationMs: item.duration_ms,
+  };
 }
 
 async function downloadTranscript(
   item: LibraryItem,
-  body: string,
+  format: TranscriptFormat,
+  doc: TranscriptDocument,
 ): Promise<void> {
+  const option = TRANSCRIPT_FORMATS.find((f) => f.format === format);
   const dest = await save({
-    defaultPath: transcriptFileName(item),
-    filters: [{ name: "Texto", extensions: ["txt", "md"] }],
+    defaultPath: transcriptFileName(item.title, item.timestamp, format),
+    filters: [{ name: option?.label ?? format, extensions: [format] }],
   });
   if (!dest) return;
-  const header = [
-    item.title,
-    formatWhen(item.timestamp) +
-      (item.duration_ms !== undefined
-        ? ` · ${formatDuration(item.duration_ms)}`
-        : ""),
-  ].join("\n");
-  const res = await commands.exportTranscriptText(
-    dest,
-    `${header}\n\n${body}\n`,
-  );
+  const res =
+    format === "docx"
+      ? await commands.exportTranscriptDocx(
+          dest,
+          doc.title,
+          doc.subtitle,
+          doc.entries.map((e) => ({
+            label: entryLabel(e) || null,
+            text: e.text,
+          })),
+        )
+      : await commands.exportTranscriptText(
+          dest,
+          { txt: toPlainText, md: toMarkdown, srt: toSrt, vtt: toVtt }[format](
+            doc,
+          ),
+        );
   if (res.status === "error") {
     toast.error(`No se pudo guardar la transcripción: ${res.error}`);
   } else {
     toast.success("Transcripción descargada");
   }
+}
+
+/// "Descargar" button with the available formats. Subtitles only show up
+/// when the transcript has times (meetings recorded on this computer).
+function DownloadTranscriptMenu({
+  disabled,
+  canSubtitle,
+  onPick,
+}: {
+  disabled: boolean;
+  canSubtitle: boolean;
+  onPick: (format: TranscriptFormat) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
+        className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40 inline-flex items-center gap-1"
+      >
+        <Download className="w-3 h-3" />
+        Descargar transcripción
+        <ChevronDown className="w-3 h-3" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-20 min-w-56 rounded-md border border-mid-gray/30 bg-background shadow-lg py-1">
+          {TRANSCRIPT_FORMATS.filter((f) => canSubtitle || !f.needsTimes).map(
+            (f) => (
+              <button
+                key={f.format}
+                onClick={() => {
+                  setOpen(false);
+                  onPick(f.format);
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-mid-gray/10"
+              >
+                <div className="text-xs">{f.label}</div>
+                <div className="text-[11px] text-mid-gray">{f.hint}</div>
+              </button>
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function LibraryPage() {
@@ -326,16 +447,18 @@ export function LibraryPage() {
     refresh();
   };
 
+  const speakerLabels = {
+    mic: t("transcriptView.speakers.mic"),
+    system: t("transcriptView.speakers.system"),
+  };
+
   /// The transcript as shown on screen (meetings follow the chosen view).
   const transcriptText = (item: LibraryItem): string =>
     item.kind === "meeting"
       ? formatTranscriptForCopy(
           item.chunks ?? [],
           meetingViewMode,
-          {
-            mic: t("transcriptView.speakers.mic"),
-            system: t("transcriptView.speakers.system"),
-          },
+          speakerLabels,
           item.transcript,
         )
       : item.transcript;
@@ -672,19 +795,28 @@ export function LibraryPage() {
                           : t("transcriptView.copyTranscript")}
                       </button>
 
-                      <button
-                        onClick={() =>
-                          downloadTranscript(item, transcriptText(item)).catch(
-                            (err) =>
-                              console.warn("transcript download failed", err),
+                      <DownloadTranscriptMenu
+                        disabled={!item.transcript}
+                        canSubtitle={hasTimes(
+                          transcriptDocument(item, "timeline", speakerLabels),
+                        )}
+                        onPick={(format) =>
+                          downloadTranscript(
+                            item,
+                            format,
+                            transcriptDocument(
+                              item,
+                              // Subtitles need a time on every line.
+                              format === "srt" || format === "vtt"
+                                ? "timeline"
+                                : meetingViewMode,
+                              speakerLabels,
+                            ),
+                          ).catch((err) =>
+                            console.warn("transcript download failed", err),
                           )
                         }
-                        disabled={!item.transcript}
-                        className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:bg-mid-gray/10 disabled:opacity-40 inline-flex items-center gap-1"
-                      >
-                        <Download className="w-3 h-3" />
-                        Descargar transcripción
-                      </button>
+                      />
 
                       {item.kind === "meeting" && (
                         <button
@@ -788,9 +920,7 @@ function BotTranscript({
   }
   return (
     <div className="flex flex-col gap-2 max-h-96 overflow-y-auto text-sm leading-relaxed">
-      <p className="text-xs text-mid-gray">
-        {t("meetingBot.transcribedBy")}
-      </p>
+      <p className="text-xs text-mid-gray">{t("meetingBot.transcribedBy")}</p>
       {lines.map((line, i) => (
         <div key={i}>
           {(i === 0 || lines[i - 1].speaker !== line.speaker) && (
