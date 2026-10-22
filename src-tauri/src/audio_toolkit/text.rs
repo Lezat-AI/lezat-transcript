@@ -237,13 +237,30 @@ static LEZAT_PATTERN: Lazy<Regex> =
 // so "sat" alone and "Lezat" are not touched.
 static ZAT_ENDING_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b([^\W\d_]{3,})[sz]at{1,2}\b").unwrap());
-// Split forms: "Health Sat", "House zat". Lowercase "sat" (English verb) and
-// "SAT" (Mexican tax office) stay.
+// Split forms: "Health Sat", "House zat". Lowercase "sat" and "SAT" join only
+// where a lone "Sat" means "Zat" (see SPLIT_ZAT_ANY_PATTERN).
 static SPLIT_ZAT_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\b([^\W\d_]{3,})[ \-](?:Sat|[Zz]at)\b").unwrap());
 static SATELLITE_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\bsat[eé]lites?\b|\bsatellites?\b").unwrap());
 static SENTENCE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^.!?\n]*[.!?\n]*").unwrap());
+
+// Compound names in any case ("house sat", "price SAT", "Search-SAT") and a lone
+// "Sat"/"SAT" are "Zat" too, unless the sentence is about the tax office,
+// Saturday or satellites, or is English ("the people sat down").
+static SPLIT_ZAT_ANY_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b([^\W\d_]{3,})[ \-](?:sat|zat)\b").unwrap());
+static STANDALONE_SAT_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(^|[^\w-])sat([^\w-]|$)").unwrap());
+static KEEP_SAT_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\b(?:factur\w*|impuest\w*|tribut\w*|fiscal\w*|declaraci\w*|rfc|hacienda|contador\w*|pag\w*|s[aá]bados?|nos\s+vemos|fin\s+de\s+semana|weekend|sat[eé]lites?|satellites?)\b",
+    )
+    .unwrap()
+});
+static SPANISH_VERB_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(?:ar|ir|ando|iendo)$").unwrap());
+static WORD_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^\W\d_]+").unwrap());
 
 /// Words before a plain "Sat" that is not a product ("they Sat", "para Sat").
 const NOT_A_ZAT_STEM: &[&str] = &[
@@ -251,6 +268,49 @@ const NOT_A_ZAT_STEM: &[&str] = &[
     "were", "our", "their", "this", "that", "los", "las", "del", "con", "por", "una", "que",
     "para", "sobre", "este", "esta", "ese", "esa",
 ];
+/// Connectors and verbs before a lowercase/uppercase "sat" ("como SAT", "ver SAT").
+const NOT_A_SPLIT_STEM: &[&str] = &[
+    "como", "pero", "entre", "hacia", "desde", "hasta", "sin", "mas", "más", "muy", "todo", "toda",
+    "todos", "cada", "otro", "otra", "hacer", "tener", "poner", "ver", "ser", "saber", "conocer",
+    "mover", "leer", "meter",
+];
+/// Two of these in a sentence make it English.
+const ENGLISH_WORDS: &[&str] = &[
+    "the", "they", "she", "he", "you", "we", "it", "is", "are", "was", "were", "on", "at", "to",
+    "of", "my", "your", "his", "her", "our", "their", "see", "down", "idle", "just", "then",
+];
+
+fn sat_means_zat(sentence: &str) -> bool {
+    if KEEP_SAT_PATTERN.is_match(sentence) {
+        return false;
+    }
+    let lower = sentence.to_lowercase();
+    WORD_PATTERN
+        .find_iter(&lower)
+        .filter(|w| ENGLISH_WORDS.contains(&w.as_str()))
+        .count()
+        < 2
+}
+
+fn standalone_sat(sentence: &str) -> String {
+    if !sat_means_zat(sentence) {
+        return sentence.to_string();
+    }
+    let joined = SPLIT_ZAT_ANY_PATTERN.replace_all(sentence, |c: &regex::Captures| {
+        let stem = c[1].to_lowercase();
+        if NOT_A_ZAT_STEM.contains(&stem.as_str())
+            || NOT_A_SPLIT_STEM.contains(&stem.as_str())
+            || SPANISH_VERB_PATTERN.is_match(&stem)
+        {
+            c[0].to_string()
+        } else {
+            zat_name(&c[1])
+        }
+    });
+    STANDALONE_SAT_PATTERN
+        .replace_all(&joined, "${1}Zat${2}")
+        .into_owned()
+}
 
 fn zat_name(stem: &str) -> String {
     let mut chars = stem.chars();
@@ -277,9 +337,9 @@ pub fn apply_brand_spelling(text: &str) -> String {
                     zat_name(&c[1])
                 }
             });
-            ZAT_ENDING_PATTERN
-                .replace_all(&joined, |c: &regex::Captures| zat_name(&c[1]))
-                .into_owned()
+            let ended =
+                ZAT_ENDING_PATTERN.replace_all(&joined, |c: &regex::Captures| zat_name(&c[1]));
+            standalone_sat(&ended)
         })
         .into_owned()
 }
@@ -451,6 +511,16 @@ mod tests {
                 "Hablamos del satélite Landsat. Luego vimos CoachSat.",
                 "Hablamos del satélite Landsat. Luego vimos CoachZat.",
             ),
+            // Compound names join with Zat in any case; a lone SAT is Zat.
+            ("la demo de house sat", "la demo de HouseZat"),
+            ("price sat y search SAT", "PriceZat y SearchZat"),
+            ("el buscador Search-SAT", "el buscador SearchZat"),
+            (
+                "unificó los proyectos de chat y SAT",
+                "unificó los proyectos de chat y Zat",
+            ),
+            ("hay que revisar SAT", "hay que revisar Zat"),
+            ("sat", "Zat"),
         ];
         for (raw, expected) in cases {
             assert_eq!(apply_brand_spelling(raw), expected, "input: {raw}");
@@ -464,7 +534,8 @@ mod tests {
             "they Sat down",
             "la factura del SAT",
             "nos vemos el Sat",
-            "sat",
+            "pagar el SAT este mes",
+            "see you on Sat",
             "Mazatlán",
             "satisfecho",
             "la lesión del jugador",
