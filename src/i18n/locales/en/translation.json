@@ -944,7 +944,7 @@
     "daily": "Daily standup",
     "send": "Send bot",
     "admitHint": "When it asks to join, admit it in the meeting. It tells the chat that it is transcribing.",
-    "commandsHint": "In the meeting, anyone can type in the chat: NoteZat tarea, decisión, marcar, proyecto, pausa, continuar, salir or borrar. NoteZat ayuda shows the list.",
+    "commandsHint": "In the meeting, anyone can type in the chat: NoteZat tarea, decisión, marcar, proyecto, idioma, pausa, continuar, salir or borrar. NoteZat ayuda shows the list.",
     "remove": "Remove",
     "status": {
       "joining": "Joining the meeting…",
