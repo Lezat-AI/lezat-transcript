@@ -1610,7 +1610,7 @@ export type MeetingBot = { bot_id: string; meeting_url: string; meeting_platform
 state: string; 
 /**
  * Processing of its transcript: sent, processing, ingested,
- * no_transcript, failed.
+ * no_transcript, discarded ("NoteZat borrar" in the chat), failed.
  */
 status: string; error: string | null; 
 /**

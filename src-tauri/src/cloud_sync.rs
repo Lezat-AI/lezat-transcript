@@ -865,7 +865,7 @@ pub struct MeetingBot {
     /// leaving, post_processing, ended, fatal_error...
     pub state: String,
     /// Processing of its transcript: sent, processing, ingested,
-    /// no_transcript, failed.
+    /// no_transcript, discarded ("NoteZat borrar" in the chat), failed.
     pub status: String,
     pub error: Option<String>,
     /// manual (link sent from the app) or calendar (auto-join).

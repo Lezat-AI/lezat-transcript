@@ -944,6 +944,7 @@
     "daily": "Daily standup",
     "send": "Send bot",
     "admitHint": "When it asks to join, admit it in the meeting. It tells the chat that it is transcribing.",
+    "commandsHint": "In the meeting, anyone can type in the chat: NoteZat tarea, decisión, marcar, proyecto, pausa, continuar, salir or borrar. NoteZat ayuda shows the list.",
     "remove": "Remove",
     "status": {
       "joining": "Joining the meeting…",
@@ -954,6 +955,7 @@
       "ingested_one": "{{count}} task ready for review",
       "ingested_other": "{{count}} tasks ready for review",
       "noTranscript": "There was nothing to transcribe",
+      "discarded": "Deleted from the meeting chat: nothing was kept",
       "failed": "It did not work: {{error}}"
     },
     "manualTitle": "Or send it now with the link",

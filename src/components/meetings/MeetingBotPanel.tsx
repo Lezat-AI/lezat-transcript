@@ -15,7 +15,12 @@ import { formatDayMonthYearTime } from "@/utils/dayMonthYear";
 /// Bot states after which it is out of the meeting for good.
 const GONE_STATES = new Set(["ended", "fatal_error", "data_deleted"]);
 /// Statuses after which nothing else will happen to the bot.
-const FINAL_STATUSES = new Set(["ingested", "no_transcript", "failed"]);
+const FINAL_STATUSES = new Set([
+  "ingested",
+  "no_transcript",
+  "discarded",
+  "failed",
+]);
 const POLL_MS = 8000;
 /// With auto-join on, bots appear without the user doing anything.
 const AUTO_JOIN_POLL_MS = 30000;
@@ -37,6 +42,8 @@ function inMeeting(bot: MeetingBot): boolean {
 function statusKey(bot: MeetingBot): string {
   if (bot.status === "ingested") return "meetingBot.status.ingested";
   if (bot.status === "no_transcript") return "meetingBot.status.noTranscript";
+  // Someone wrote "NoteZat borrar" in the meeting chat: nothing was kept.
+  if (bot.status === "discarded") return "meetingBot.status.discarded";
   if (bot.status === "failed" || bot.state === "fatal_error")
     return "meetingBot.status.failed";
   if (bot.status === "processing" || bot.state === "ended")
@@ -56,7 +63,8 @@ function statusTone(bot: MeetingBot): string {
   if (bot.status === "ingested") return "text-green-500";
   if (bot.status === "failed" || bot.state === "fatal_error")
     return "text-red-500";
-  if (bot.status === "no_transcript") return "text-mid-gray";
+  if (bot.status === "no_transcript" || bot.status === "discarded")
+    return "text-mid-gray";
   return "text-blue-500";
 }
 
@@ -289,6 +297,7 @@ export function MeetingBotPanel() {
           </button>
         </div>
         <p className="text-xs text-mid-gray">{t("meetingBot.admitHint")}</p>
+        <p className="text-xs text-mid-gray">{t("meetingBot.commandsHint")}</p>
       </div>
 
       {error && (
