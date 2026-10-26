@@ -944,7 +944,7 @@
     "daily": "Daily standup",
     "send": "Send bot",
     "admitHint": "When it asks to join, admit it in the meeting. It tells the chat that it is transcribing.",
-    "commandsHint": "In the meeting, anyone can type in the chat: NoteZat tarea, decisión, marcar, proyecto, idioma, pausa, continuar, salir or borrar. NoteZat ayuda shows the list.",
+    "commandsHint": "In the meeting, anyone can type in the chat: NoteZat tarea, decisión, marcar, proyecto, idioma, capturar, pausa, continuar, salir or borrar. NoteZat ayuda shows the list.",
     "remove": "Remove",
     "status": {
       "joining": "Joining the meeting…",
@@ -970,6 +970,13 @@
       "noUpcoming": "No meetings with a link in the next 24 hours.",
       "botJoins": "Bot joins",
       "noBot": "No bot"
+    },
+    "screenCaptures": {
+      "title_one": "{{count}} screen capture",
+      "title_other": "{{count}} screen captures",
+      "at": "Capture at {{time}}",
+      "enlarged": "Enlarged screen capture",
+      "failed": "Some captures could not be loaded."
     },
     "transcribedBy": "Transcribed in the meeting by NoteZat, Lezat's notetaker (no audio on this computer)."
   }

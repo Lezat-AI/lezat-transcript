@@ -944,7 +944,7 @@
     "daily": "Daily standup",
     "send": "Enviar bot",
     "admitHint": "Cuando pida entrar, admítelo en la reunión. Avisa en el chat que está transcribiendo.",
-    "commandsHint": "En la reunión, cualquiera puede escribir en el chat: NoteZat tarea, decisión, marcar, proyecto, idioma, pausa, continuar, salir o borrar. NoteZat ayuda muestra la lista.",
+    "commandsHint": "En la reunión, cualquiera puede escribir en el chat: NoteZat tarea, decisión, marcar, proyecto, idioma, capturar, pausa, continuar, salir o borrar. NoteZat ayuda muestra la lista.",
     "remove": "Sacar",
     "status": {
       "joining": "Entrando a la reunión…",
@@ -970,6 +970,13 @@
       "noUpcoming": "No tienes reuniones con link en las próximas 24 horas.",
       "botJoins": "Entra el bot",
       "noBot": "Sin bot"
+    },
+    "screenCaptures": {
+      "title_one": "{{count}} captura de pantalla",
+      "title_other": "{{count}} capturas de pantalla",
+      "at": "Captura en el minuto {{time}}",
+      "enlarged": "Captura de pantalla ampliada",
+      "failed": "No se pudieron cargar algunas capturas."
     },
     "transcribedBy": "Transcrita en la reunión por NoteZat, el asistente de notas de Lezat (sin audio en este equipo)."
   }

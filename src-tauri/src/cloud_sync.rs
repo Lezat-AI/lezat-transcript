@@ -194,6 +194,22 @@ pub struct CloudTranscription {
     pub transcript_text: Option<String>,
     pub participant_count: Option<i32>,
     pub received_at: String,
+    /// Stills of shared screens ("NoteZat capturar" in a bot meeting).
+    #[serde(default)]
+    pub screen_captures: Vec<ScreenCaptureRef>,
+}
+
+/// A still of a shared screen; the image is fetched by id when shown.
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct ScreenCaptureRef {
+    pub id: String,
+    /// Milliseconds from the start of the transcript.
+    #[serde(default)]
+    pub offset_ms: i64,
+    #[serde(default)]
+    pub width: i32,
+    #[serde(default)]
+    pub height: i32,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Type)]
@@ -851,6 +867,38 @@ pub fn fetch_transcriptions(settings: &AppSettings) -> Result<CloudTranscription
             truncate_chars(&body, 500)
         )
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct ScreenCaptureImage {
+    content_type: String,
+    data: String,
+}
+
+/// A screen capture as a `data:` URL the webview can show directly.
+pub fn fetch_screen_capture(settings: &AppSettings, capture_id: &str) -> Result<String> {
+    let url = format!(
+        "{}/api/desktop/screen-captures/{}",
+        base_url(settings)?,
+        urlencoding::encode(capture_id)
+    );
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .get(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Failed to fetch screen capture (HTTP {status}): {}",
+            truncate_chars(&body, 300)
+        ));
+    }
+    let image: ScreenCaptureImage =
+        serde_json::from_str(&body).map_err(|e| anyhow!("Failed to parse screen capture: {e}"))?;
+    Ok(format!("data:{};base64,{}", image.content_type, image.data))
 }
 
 /// The notetaker bot sent to a meeting link (Google Meet, Teams, Zoom). The

@@ -32,6 +32,7 @@ import {
   type HistoryUpdatePayload,
   type MeetingChunk,
   type MeetingRecord,
+  type ScreenCaptureRef,
 } from "@/bindings";
 import { useTranslation } from "react-i18next";
 import { useOsType } from "@/hooks/useOsType";
@@ -93,6 +94,8 @@ interface LibraryItem {
   transcription_text?: string;
   /// For bot meetings only: what each person said, in order.
   lines?: { speaker: string; text: string }[];
+  /// For bot meetings only: stills of shared screens ("NoteZat capturar").
+  screen_captures?: ScreenCaptureRef[];
 }
 
 type Filter = "all" | "dictation" | "meeting";
@@ -144,6 +147,7 @@ function fromBotTranscription(
     timestamp: Math.floor(Date.parse(t.received_at) / 1000),
     transcript,
     lines,
+    screen_captures: t.screen_captures ?? [],
   };
 }
 
@@ -686,10 +690,15 @@ export function LibraryPage() {
                     {/* Transcript area: meetings get the dialog/plain
                         toggle, dictations get plain text. */}
                     {item.kind === "bot" ? (
-                      <BotTranscript
-                        lines={item.lines ?? []}
-                        text={item.transcript}
-                      />
+                      <>
+                        <BotTranscript
+                          lines={item.lines ?? []}
+                          text={item.transcript}
+                        />
+                        <ScreenCaptureGallery
+                          captures={item.screen_captures ?? []}
+                        />
+                      </>
                     ) : item.kind === "meeting" ? (
                       <>
                         <MeetingTranscriptView
@@ -939,6 +948,88 @@ function BotTranscript({
           <div>{line.text}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/// Stills of what was shared on screen ("NoteZat capturar" in the meeting
+/// chat), loaded one by one when the meeting is opened. Click to enlarge.
+function ScreenCaptureGallery({ captures }: { captures: ScreenCaptureRef[] }) {
+  const { t } = useTranslation();
+  const [images, setImages] = useState<Record<string, string>>({});
+  const [failed, setFailed] = useState(false);
+  const [enlarged, setEnlarged] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (const capture of captures) {
+        const res = await commands.cloudGetScreenCapture(capture.id);
+        if (cancelled) return;
+        if (res.status === "ok") {
+          setImages((prev) => ({ ...prev, [capture.id]: res.data }));
+        } else {
+          console.warn("cloud_get_screen_capture failed:", res.error);
+          setFailed(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [captures]);
+
+  if (captures.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="text-xs font-semibold text-mid-gray">
+        {t("meetingBot.screenCaptures.title", { count: captures.length })}
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {captures.map((capture) => {
+          const time = formatDuration(capture.offset_ms ?? 0);
+          const src = images[capture.id];
+          return (
+            <button
+              key={capture.id}
+              type="button"
+              onClick={() => src && setEnlarged(capture.id)}
+              className="relative aspect-video rounded border border-mid-gray/20 overflow-hidden bg-mid-gray/10 flex items-center justify-center"
+              title={t("meetingBot.screenCaptures.at", { time })}
+            >
+              {src ? (
+                <img
+                  src={src}
+                  alt={t("meetingBot.screenCaptures.at", { time })}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <Loader2 className="w-4 h-4 animate-spin text-mid-gray" />
+              )}
+              <span className="absolute bottom-1 right-1 text-[10px] px-1 rounded bg-black/60 text-white">
+                {time}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {failed && (
+        <p className="text-xs text-red-500">
+          {t("meetingBot.screenCaptures.failed")}
+        </p>
+      )}
+      {enlarged && images[enlarged] && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6 cursor-zoom-out"
+          onClick={() => setEnlarged(null)}
+        >
+          <img
+            src={images[enlarged]}
+            alt={t("meetingBot.screenCaptures.enlarged")}
+            className="max-w-full max-h-full rounded"
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -166,6 +166,20 @@ pub async fn cloud_get_transcriptions(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn cloud_get_screen_capture(
+    app: AppHandle,
+    capture_id: String,
+) -> Result<String, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::fetch_screen_capture(&s, &capture_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn cloud_get_integrations_status(
     app: AppHandle,
 ) -> Result<cloud_sync::IntegrationsStatusResponse, String> {

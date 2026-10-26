@@ -466,6 +466,7 @@ pub fn run(cli_args: CliArgs) {
             commands::cloud_sync::cloud_get_action_items,
             commands::cloud_sync::cloud_update_action_item,
             commands::cloud_sync::cloud_get_transcriptions,
+            commands::cloud_sync::cloud_get_screen_capture,
             commands::cloud_sync::cloud_send_meeting_bot,
             commands::cloud_sync::cloud_list_meeting_bots,
             commands::cloud_sync::cloud_remove_meeting_bot,

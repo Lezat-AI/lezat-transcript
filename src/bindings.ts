@@ -1063,6 +1063,14 @@ async cloudGetTranscriptions() : Promise<Result<CloudTranscriptionsResponse, str
     else return { status: "error", error: e  as any };
 }
 },
+async cloudGetScreenCapture(captureId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_screen_capture", { captureId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cloudSendMeetingBot(meetingUrl: string, title: string, isDaily: boolean) : Promise<Result<MeetingBot, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cloud_send_meeting_bot", { meetingUrl, title, isDaily }) };
@@ -1563,7 +1571,11 @@ export type CloudSyncEvent = { state: "syncing"; meeting_id: number } | { state:
  * translate.
  */
 { state: "warning"; meeting_id: number; code: string }
-export type CloudTranscription = { id: string; provider: string; meeting_id: string | null; meeting_title: string | null; meeting_platform: string | null; transcript_text_available: boolean; transcript_text: string | null; participant_count: number | null; received_at: string }
+export type CloudTranscription = { id: string; provider: string; meeting_id: string | null; meeting_title: string | null; meeting_platform: string | null; transcript_text_available: boolean; transcript_text: string | null; participant_count: number | null; received_at: string; 
+/**
+ * Stills of shared screens ("NoteZat capturar" in a bot meeting).
+ */
+screen_captures?: ScreenCaptureRef[] }
 export type CloudTranscriptionsResponse = { items: CloudTranscription[] }
 export type CompletedTask = { description: string; source_sentence: string | null }
 export type CustomSounds = { start: boolean; stop: boolean }
@@ -1696,6 +1708,14 @@ export type PersonDailyReport = { speaker_name: string; speaker_email: string | 
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 export type RecommendedModel = { model_id: string; model_name: string; size_mb: number; reason: string }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+/**
+ * A still of a shared screen; the image is fetched by id when shown.
+ */
+export type ScreenCaptureRef = { id: string; 
+/**
+ * Milliseconds from the start of the transcript.
+ */
+offset_ms?: number; width?: number; height?: number }
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
