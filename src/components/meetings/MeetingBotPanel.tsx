@@ -11,6 +11,7 @@ import {
 import { commands } from "@/bindings";
 import type { MeetingBot, MeetingBotSettings } from "@/bindings";
 import { formatDayMonthYearTime } from "@/utils/dayMonthYear";
+import { LiveMeetingPanel } from "./LiveMeetingPanel";
 
 /// Bot states after which it is out of the meeting for good.
 const GONE_STATES = new Set(["ended", "fatal_error", "data_deleted"]);
@@ -183,6 +184,11 @@ export function MeetingBotPanel() {
         </h2>
         <p className="text-sm text-mid-gray">{t("meetingBot.description")}</p>
       </div>
+
+      {/* A meeting in progress comes first: notes, questions and controls. */}
+      {bots.filter(inMeeting).map((bot) => (
+        <LiveMeetingPanel key={`live-${bot.bot_id}`} botId={bot.bot_id} />
+      ))}
 
       {botSettings && (
         <div className="flex flex-col gap-2">

@@ -978,6 +978,73 @@
       "enlarged": "Enlarged screen capture",
       "failed": "Some captures could not be loaded."
     },
-    "transcribedBy": "Transcribed in the meeting by NoteZat, Lezat's notetaker (no audio on this computer)."
+    "transcribedBy": "Transcribed in the meeting by NoteZat, Lezat's notetaker (no audio on this computer).",
+    "live": {
+      "badge": "Live",
+      "untitled": "Meeting in progress",
+      "recording": "NoteZat is transcribing",
+      "paused": "Transcription paused",
+      "languageIs": "in {{language}}",
+      "private": "Private",
+      "privateHint": "Your notes and questions don't show in the meeting chat. Only controls are announced.",
+      "tabs": {
+        "note": "Note",
+        "ask": "Ask",
+        "controls": "Controls"
+      },
+      "kinds": {
+        "task": "Task",
+        "decision": "Decision",
+        "mark": "Moment",
+        "project": "Project"
+      },
+      "kindHints": {
+        "task": "Always reaches your task review list, even if the AI misses it.",
+        "decision": "Kept in the transcript and the meeting email. It doesn't create a task.",
+        "mark": "Marks what is being discussed now as important. Text is optional.",
+        "project": "Which product is discussed from now on, so tasks go to the right board."
+      },
+      "placeholders": {
+        "task": "E.g. Diego reviews the statements on Friday",
+        "decision": "E.g. alerts go out Tuesday and Friday",
+        "mark": "Optional note about this moment",
+        "project": "E.g. PropZat"
+      },
+      "save": "Add",
+      "saved": "Added",
+      "notesTitle_one": "Noted in this meeting ({{count}})",
+      "notesTitle_other": "Noted in this meeting ({{count}})",
+      "notesEmpty": "No notes yet. What you or your team note, from the app or the chat, shows here.",
+      "fromApp": "from the app",
+      "fromChat": "from the chat",
+      "ask": {
+        "live_summary": "Summary so far",
+        "live_tasks": "Tasks so far",
+        "placeholder": "Ask something about the meeting…",
+        "send": "Ask",
+        "thinking": "NoteZat is reading the meeting…",
+        "copy": "Copy",
+        "copied": "Copied",
+        "onlyYou": "Only you see this answer.",
+        "hint": "Answers come from what has been transcribed so far and only you see them."
+      },
+      "pause": "Pause",
+      "resume": "Resume",
+      "pauseHint": "Stops transcribing until you resume",
+      "resumeHint": "Transcription is stopped",
+      "capturesOff": "Captures off",
+      "capturesOn": "Capturing screen",
+      "capturesHint": "One image every 15 s while someone shares",
+      "capturesUnavailable": "Not available on the server yet",
+      "language": "Transcription language",
+      "announcedHint": "Pausing, capturing, changing the language or removing NoteZat affects everyone: the bot says in the chat who did it.",
+      "leave": "Remove NoteZat",
+      "leaveHint": "Processes the transcript",
+      "delete": "Delete and remove",
+      "deleteHint": "Keeps nothing",
+      "deleteConfirm": "NoteZat will leave the meeting and nothing will be kept: no transcript, tasks or email. This can't be undone.",
+      "deleteYes": "Yes, delete",
+      "cancel": "Cancel"
+    }
   }
 }

@@ -1044,6 +1044,113 @@ pub fn remove_meeting_bot(settings: &AppSettings, bot_id: &str) -> Result<Meetin
     parse_meeting_bot_response(resp, "Could not remove the bot")
 }
 
+/// A note taken during a bot meeting: typed in the meeting chat
+/// ("NoteZat tarea ...") or added from the app's "En vivo" panel.
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct BotNote {
+    /// task | decision | mark | project
+    pub kind: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub author: String,
+    /// chat | app
+    #[serde(default)]
+    pub source: String,
+    pub at: Option<String>,
+}
+
+/// What the "En vivo" panel shows while the bot is in the meeting.
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct BotLive {
+    pub bot_id: String,
+    #[serde(default)]
+    pub title: String,
+    pub state: String,
+    pub in_meeting: bool,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub captures_on: bool,
+    /// False while the server can't take screen captures.
+    #[serde(default)]
+    pub captures_available: bool,
+    pub language: Option<String>,
+    #[serde(default)]
+    pub notes: Vec<BotNote>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct BotAnswer {
+    pub answer: String,
+}
+
+/// Errors of the "En vivo" endpoints are already written for the user
+/// ("La IA no está disponible..."): only their detail is kept.
+fn parse_live_response<T: serde::de::DeserializeOwned>(
+    resp: reqwest::blocking::Response,
+) -> Result<T> {
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!("{}", error_detail(&body)));
+    }
+    serde_json::from_str::<T>(&body).map_err(|e| anyhow!("Respuesta inesperada del servidor: {e}"))
+}
+
+fn bot_live_request(
+    settings: &AppSettings,
+    bot_id: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Result<reqwest::blocking::Response> {
+    let url = format!(
+        "{}/api/desktop/bots/{}/{}",
+        base_url(settings)?,
+        urlencoding::encode(bot_id),
+        path
+    );
+    let key = api_key(settings)?;
+    let client = build_client()?;
+    let request = match body {
+        Some(json) => client.post(&url).json(&json),
+        None => client.get(&url),
+    };
+    request
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Sin conexión con el servidor: {e}"))
+}
+
+pub fn fetch_bot_live(settings: &AppSettings, bot_id: &str) -> Result<BotLive> {
+    parse_live_response(bot_live_request(settings, bot_id, "live", None)?)
+}
+
+pub fn add_bot_note(
+    settings: &AppSettings,
+    bot_id: &str,
+    kind: &str,
+    text: &str,
+) -> Result<BotLive> {
+    let body = serde_json::json!({ "kind": kind, "text": text });
+    parse_live_response(bot_live_request(settings, bot_id, "notes", Some(body))?)
+}
+
+pub fn control_bot(
+    settings: &AppSettings,
+    bot_id: &str,
+    action: &str,
+    text: &str,
+) -> Result<BotLive> {
+    let body = serde_json::json!({ "action": action, "text": text });
+    parse_live_response(bot_live_request(settings, bot_id, "control", Some(body))?)
+}
+
+pub fn ask_bot(settings: &AppSettings, bot_id: &str, kind: &str, text: &str) -> Result<BotAnswer> {
+    let body = serde_json::json!({ "kind": kind, "text": text });
+    parse_live_response(bot_live_request(settings, bot_id, "ask", Some(body))?)
+}
+
 /// Fetch integrations status from the backend.
 pub fn fetch_integrations_status(settings: &AppSettings) -> Result<IntegrationsStatusResponse> {
     let url = format!("{}/api/desktop/integrations/status", base_url(settings)?);

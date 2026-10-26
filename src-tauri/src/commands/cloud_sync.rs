@@ -166,6 +166,68 @@ pub async fn cloud_get_transcriptions(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn cloud_get_bot_live(
+    app: AppHandle,
+    bot_id: String,
+) -> Result<cloud_sync::BotLive, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::fetch_bot_live(&s, &bot_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_add_bot_note(
+    app: AppHandle,
+    bot_id: String,
+    kind: String,
+    text: String,
+) -> Result<cloud_sync::BotLive, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::add_bot_note(&s, &bot_id, &kind, &text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_control_bot(
+    app: AppHandle,
+    bot_id: String,
+    action: String,
+    text: String,
+) -> Result<cloud_sync::BotLive, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::control_bot(&s, &bot_id, &action, &text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_ask_bot(
+    app: AppHandle,
+    bot_id: String,
+    kind: String,
+    text: String,
+) -> Result<cloud_sync::BotAnswer, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::ask_bot(&s, &bot_id, &kind, &text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn cloud_get_screen_capture(
     app: AppHandle,
     capture_id: String,

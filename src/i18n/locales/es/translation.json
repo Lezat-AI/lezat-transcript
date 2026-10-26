@@ -978,6 +978,73 @@
       "enlarged": "Captura de pantalla ampliada",
       "failed": "No se pudieron cargar algunas capturas."
     },
-    "transcribedBy": "Transcrita en la reunión por NoteZat, el asistente de notas de Lezat (sin audio en este equipo)."
+    "transcribedBy": "Transcrita en la reunión por NoteZat, el asistente de notas de Lezat (sin audio en este equipo).",
+    "live": {
+      "badge": "En vivo",
+      "untitled": "Reunión en curso",
+      "recording": "NoteZat está transcribiendo",
+      "paused": "Transcripción en pausa",
+      "languageIs": "en {{language}}",
+      "private": "Privado",
+      "privateHint": "Tus notas y preguntas no aparecen en el chat de la reunión. Solo los controles se anuncian.",
+      "tabs": {
+        "note": "Anotar",
+        "ask": "Preguntar",
+        "controls": "Controles"
+      },
+      "kinds": {
+        "task": "Tarea",
+        "decision": "Decisión",
+        "mark": "Momento",
+        "project": "Proyecto"
+      },
+      "kindHints": {
+        "task": "Llega siempre a tu lista de tareas para revisar, aunque la IA no la detecte.",
+        "decision": "Queda en la transcripción y en el correo de la reunión. No crea una tarea.",
+        "mark": "Marca lo que se está hablando ahora como importante. El texto es opcional.",
+        "project": "Indica de qué producto se habla desde ahora, para enviar las tareas al tablero correcto."
+      },
+      "placeholders": {
+        "task": "Ej: Diego revisa los extractos el viernes",
+        "decision": "Ej: las alertas salen martes y viernes",
+        "mark": "Nota opcional sobre este momento",
+        "project": "Ej: PropZat"
+      },
+      "save": "Anotar",
+      "saved": "Anotado",
+      "notesTitle_one": "Anotado en esta reunión ({{count}})",
+      "notesTitle_other": "Anotado en esta reunión ({{count}})",
+      "notesEmpty": "Todavía no hay notas. Lo que anoten tú o tu equipo, desde la app o el chat, aparece aquí.",
+      "fromApp": "desde la app",
+      "fromChat": "desde el chat",
+      "ask": {
+        "live_summary": "Resumen hasta ahora",
+        "live_tasks": "Tareas hasta ahora",
+        "placeholder": "Pregúntale algo sobre la reunión…",
+        "send": "Preguntar",
+        "thinking": "NoteZat está leyendo la reunión…",
+        "copy": "Copiar",
+        "copied": "Copiado",
+        "onlyYou": "Solo tú ves esta respuesta.",
+        "hint": "Las respuestas salen de lo transcrito hasta ahora y solo las ves tú."
+      },
+      "pause": "Pausar",
+      "resume": "Reanudar",
+      "pauseHint": "Deja de transcribir hasta que la reanudes",
+      "resumeHint": "La transcripción está detenida",
+      "capturesOff": "Capturas apagadas",
+      "capturesOn": "Capturando pantalla",
+      "capturesHint": "Una imagen cada 15 s mientras alguien comparte",
+      "capturesUnavailable": "Aún no disponibles en el servidor",
+      "language": "Idioma de la transcripción",
+      "announcedHint": "Pausar, capturar, cambiar el idioma o sacar a NoteZat afecta a todos: el bot avisa en el chat quién lo hizo.",
+      "leave": "Sacar a NoteZat",
+      "leaveHint": "Procesa lo transcrito",
+      "delete": "Borrar y sacar",
+      "deleteHint": "No guarda nada",
+      "deleteConfirm": "NoteZat saldrá de la reunión y no se guardará nada: ni transcripción, ni tareas, ni correo. Esto no se puede deshacer.",
+      "deleteYes": "Sí, borrar",
+      "cancel": "Cancelar"
+    }
   }
 }

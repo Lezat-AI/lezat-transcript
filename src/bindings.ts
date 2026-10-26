@@ -1071,6 +1071,38 @@ async cloudGetScreenCapture(captureId: string) : Promise<Result<string, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async cloudGetBotLive(botId: string) : Promise<Result<BotLive, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_bot_live", { botId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudAddBotNote(botId: string, kind: string, text: string) : Promise<Result<BotLive, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_add_bot_note", { botId, kind, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudControlBot(botId: string, action: string, text: string) : Promise<Result<BotLive, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_control_bot", { botId, action, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudAskBot(botId: string, kind: string, text: string) : Promise<Result<BotAnswer, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_ask_bot", { botId, kind, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cloudSendMeetingBot(meetingUrl: string, title: string, isDaily: boolean) : Promise<Result<MeetingBot, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cloud_send_meeting_bot", { meetingUrl, title, isDaily }) };
@@ -1516,6 +1548,28 @@ status?: string | null; assignee_name?: string | null;
  * The card's current due date (YYYY-MM-DD).
  */
 due_date?: string | null; project?: string | null }
+export type BotAnswer = { answer: string }
+/**
+ * What the "En vivo" panel shows while the bot is in the meeting.
+ */
+export type BotLive = { bot_id: string; title?: string; state: string; in_meeting: boolean; paused?: boolean; captures_on?: boolean; 
+/**
+ * False while the server can't take screen captures.
+ */
+captures_available?: boolean; language: string | null; notes?: BotNote[] }
+/**
+ * A note taken during a bot meeting: typed in the meeting chat
+ * ("NoteZat tarea ...") or added from the app's "En vivo" panel.
+ */
+export type BotNote = { 
+/**
+ * task | decision | mark | project
+ */
+kind: string; text?: string; author?: string; 
+/**
+ * chat | app
+ */
+source?: string; at: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CloudActionItem = { id: string; meeting_id: string | null; meeting_title: string | null; description: string | null; assignee: string | null; 
 /**
