@@ -474,6 +474,7 @@ pub fn run(cli_args: CliArgs) {
             commands::cloud_sync::cloud_send_meeting_bot,
             commands::cloud_sync::cloud_list_meeting_bots,
             commands::cloud_sync::cloud_remove_meeting_bot,
+            commands::cloud_sync::cloud_retry_meeting_bot,
             commands::cloud_sync::cloud_get_meeting_bot_settings,
             commands::cloud_sync::cloud_set_meeting_bot_auto_join,
             commands::cloud_sync::cloud_get_integrations_status,

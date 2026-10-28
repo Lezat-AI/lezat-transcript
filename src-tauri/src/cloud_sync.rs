@@ -920,6 +920,9 @@ pub struct MeetingBot {
     pub source: String,
     pub meeting_id: Option<String>,
     pub action_items_count: i64,
+    /// Processed, but the tasks could not be extracted (e.g. Gemini failed).
+    #[serde(default)]
+    pub tasks_failed: bool,
     pub created_at: String,
 }
 
@@ -1042,6 +1045,18 @@ pub fn remove_meeting_bot(settings: &AppSettings, bot_id: &str) -> Result<Meetin
         .send()
         .map_err(|e| anyhow!("Network error: {e}"))?;
     parse_meeting_bot_response(resp, "Could not remove the bot")
+}
+
+/// Extract the bot meeting's tasks again; the email is not sent again.
+pub fn retry_meeting_bot(settings: &AppSettings, bot_id: &str) -> Result<MeetingBot> {
+    let url = format!("{}/api/desktop/bots/{}/retry", base_url(settings)?, bot_id);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .post(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    parse_meeting_bot_response(resp, "Could not retry the tasks")
 }
 
 /// A note taken during a bot meeting: typed in the meeting chat

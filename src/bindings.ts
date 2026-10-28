@@ -1127,6 +1127,14 @@ async cloudRemoveMeetingBot(botId: string) : Promise<Result<MeetingBot, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async cloudRetryMeetingBot(botId: string) : Promise<Result<MeetingBot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_retry_meeting_bot", { botId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cloudGetMeetingBotSettings() : Promise<Result<MeetingBotSettings, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cloud_get_meeting_bot_settings") };
@@ -1682,7 +1690,11 @@ status: string; error: string | null;
 /**
  * manual (link sent from the app) or calendar (auto-join).
  */
-source: string; meeting_id: string | null; action_items_count: number; created_at: string }
+source: string; meeting_id: string | null; action_items_count: number; 
+/**
+ * Processed, but the tasks could not be extracted (e.g. Gemini failed).
+ */
+tasks_failed?: boolean; created_at: string }
 /**
  * Recent bots of the user, and whether the server can send bots at all.
  */

@@ -946,6 +946,7 @@
     "admitHint": "When it asks to join, admit it in the meeting. It tells the chat that it is transcribing.",
     "commandsHint": "In the meeting, anyone can type in the chat: NoteZat tarea, decisión, marcar, proyecto, idioma, capturar, resumen, tareas, pregunta, pausa, continuar, salir or borrar. NoteZat ayuda shows the list. With guests from outside Lezat, summaries and answers arrive by email.",
     "remove": "Remove",
+    "retry": "Retry tasks",
     "status": {
       "joining": "Joining the meeting…",
       "waitingRoom": "Waiting to be admitted",
@@ -956,6 +957,7 @@
       "ingested_other": "{{count}} tasks ready for review",
       "noTranscript": "There was nothing to transcribe",
       "discarded": "Deleted from the meeting chat: nothing was kept",
+      "tasksFailed": "The tasks could not be extracted",
       "failed": "It did not work: {{error}}"
     },
     "manualTitle": "Or send it now with the link",

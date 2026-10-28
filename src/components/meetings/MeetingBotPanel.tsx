@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Loader2,
   LogOut,
+  RotateCcw,
   Send,
   ListChecks,
 } from "lucide-react";
@@ -40,7 +41,19 @@ function inMeeting(bot: MeetingBot): boolean {
   return bot.state.startsWith("joined");
 }
 
+/// Processed without tasks (Gemini failed, or nothing came out): the tasks can
+/// be extracted again. A bot that never got a transcript has nothing to retry.
+function canRetry(bot: MeetingBot): boolean {
+  if (bot.status === "failed") return GONE_STATES.has(bot.state);
+  return (
+    bot.status === "ingested" &&
+    (bot.tasks_failed === true || bot.action_items_count === 0)
+  );
+}
+
 function statusKey(bot: MeetingBot): string {
+  if (bot.status === "ingested" && bot.tasks_failed)
+    return "meetingBot.status.tasksFailed";
   if (bot.status === "ingested") return "meetingBot.status.ingested";
   if (bot.status === "no_transcript") return "meetingBot.status.noTranscript";
   // Someone wrote "NoteZat borrar" in the meeting chat: nothing was kept.
@@ -61,6 +74,7 @@ function formatMeetingTime(iso: string): string {
 }
 
 function statusTone(bot: MeetingBot): string {
+  if (bot.status === "ingested" && bot.tasks_failed) return "text-red-500";
   if (bot.status === "ingested") return "text-green-500";
   if (bot.status === "failed" || bot.state === "fatal_error")
     return "text-red-500";
@@ -166,6 +180,16 @@ export function MeetingBotPanel() {
 
   const remove = async (botId: string) => {
     const res = await commands.cloudRemoveMeetingBot(botId);
+    if (res.status === "ok") {
+      setBots((prev) => prev.map((b) => (b.bot_id === botId ? res.data : b)));
+    } else {
+      setError(res.error);
+    }
+  };
+
+  const retry = async (botId: string) => {
+    setError(null);
+    const res = await commands.cloudRetryMeetingBot(botId);
     if (res.status === "ok") {
       setBots((prev) => prev.map((b) => (b.bot_id === botId ? res.data : b)));
     } else {
@@ -345,6 +369,15 @@ export function MeetingBotPanel() {
                     </button>
                   )}
                 </>
+              )}
+              {isFinished(bot) && canRetry(bot) && (
+                <button
+                  onClick={() => void retry(bot.bot_id)}
+                  className="flex items-center gap-1 text-xs text-mid-gray hover:text-logo-primary shrink-0"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  {t("meetingBot.retry")}
+                </button>
               )}
             </li>
           ))}
