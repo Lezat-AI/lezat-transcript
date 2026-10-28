@@ -957,7 +957,7 @@
       "ingested_other": "{{count}} tareas listas para revisar",
       "noTranscript": "No hubo nada que transcribir",
       "discarded": "Borrada desde el chat de la reunión: no se guardó nada",
-      "tasksFailed": "No se pudieron extraer las tareas",
+      "tasksFailed": "No se pudieron extraer todas las tareas",
       "failed": "No funcionó: {{error}}"
     },
     "manualTitle": "O envíalo ahora con el link",

@@ -41,14 +41,12 @@ function inMeeting(bot: MeetingBot): boolean {
   return bot.state.startsWith("joined");
 }
 
-/// Processed without tasks (Gemini failed, or nothing came out): the tasks can
-/// be extracted again. A bot that never got a transcript has nothing to retry.
+/// A processed meeting's tasks can always be extracted again (Gemini may have
+/// missed part of it even when some tasks came out). A bot that never got a
+/// transcript has nothing to retry.
 function canRetry(bot: MeetingBot): boolean {
   if (bot.status === "failed") return GONE_STATES.has(bot.state);
-  return (
-    bot.status === "ingested" &&
-    (bot.tasks_failed === true || bot.action_items_count === 0)
-  );
+  return bot.status === "ingested";
 }
 
 function statusKey(bot: MeetingBot): string {

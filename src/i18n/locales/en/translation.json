@@ -957,7 +957,7 @@
       "ingested_other": "{{count}} tasks ready for review",
       "noTranscript": "There was nothing to transcribe",
       "discarded": "Deleted from the meeting chat: nothing was kept",
-      "tasksFailed": "The tasks could not be extracted",
+      "tasksFailed": "Not all the tasks could be extracted",
       "failed": "It did not work: {{error}}"
     },
     "manualTitle": "Or send it now with the link",
