@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import {
   Bot,
   CalendarDays,
@@ -117,13 +118,28 @@ export function MeetingBotPanel() {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    if (!enabled) return;
+  const loadBotSettings = useCallback(() => {
     commands
       .cloudGetMeetingBotSettings()
       .then((res) => res.status === "ok" && setBotSettings(res.data))
       .catch(() => undefined);
-  }, [enabled]);
+  }, []);
+
+  // This panel stays mounted while the user is in Integraciones, so a
+  // calendar connected there must be picked up without restarting the app.
+  useEffect(() => {
+    if (!enabled) return;
+    loadBotSettings();
+    const unlisten = listen<{ state: string }>(
+      "integration-o-auth-event",
+      (evt) => evt.payload.state === "success" && loadBotSettings(),
+    );
+    window.addEventListener("focus", loadBotSettings);
+    return () => {
+      window.removeEventListener("focus", loadBotSettings);
+      unlisten.then((fn) => fn()).catch(() => undefined);
+    };
+  }, [enabled, loadBotSettings]);
 
   const anyActive = bots.some((b) => !isFinished(b));
   const autoJoinOn = (botSettings?.auto_join ?? "off") !== "off";
