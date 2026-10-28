@@ -56,7 +56,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          # macos-14 arm64 runners were too busy to pick up the job (28-10-2026).
+          - platform: macos-15
             target: aarch64-apple-darwin
             args: --bundles dmg,app --target aarch64-apple-darwin
             asset-glob: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
