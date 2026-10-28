@@ -85,7 +85,7 @@ function statusTone(bot: MeetingBot): string {
 /// Sends the NoteZat bot to a Meet/Teams/Zoom link: the host admits
 /// it and, when the meeting ends, its tasks show up for review like those of
 /// a recording, without anyone pressing record.
-export function MeetingBotPanel() {
+export function MeetingBotPanel({ active }: { active: boolean }) {
   const { t } = useTranslation();
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -126,10 +126,14 @@ export function MeetingBotPanel() {
   }, []);
 
   // This panel stays mounted while the user is in Integraciones, so a
-  // calendar connected there must be picked up without restarting the app.
+  // calendar connected or disconnected there must be picked up without
+  // restarting the app: reload on every return to Reuniones too.
+  useEffect(() => {
+    if (enabled && active) loadBotSettings();
+  }, [enabled, active, loadBotSettings]);
+
   useEffect(() => {
     if (!enabled) return;
-    loadBotSettings();
     const unlisten = listen<{ state: string }>(
       "integration-o-auth-event",
       (evt) => evt.payload.state === "success" && loadBotSettings(),

@@ -132,7 +132,7 @@ function InlineTitle({
   );
 }
 
-export function MeetingsPage() {
+export function MeetingsPage({ active = true }: { active?: boolean }) {
   const { settings, updateSetting } = useSettings();
   const captureSystemAudio = settings?.capture_system_audio ?? false;
   const saveMeetingAudio = settings?.save_meeting_audio ?? false;
@@ -500,7 +500,7 @@ export function MeetingsPage() {
         <MeetingContextPanel meetingId={contextMeetingId} />
       )}
 
-      {cloudSyncEnabled && <MeetingBotPanel />}
+      {cloudSyncEnabled && <MeetingBotPanel active={active} />}
 
       {/* Cloud sync status for last completed meeting */}
       {Object.entries(syncStatus).length > 0 && (

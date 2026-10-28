@@ -304,7 +304,7 @@ function App() {
               {/* MeetingsPage stays mounted (hidden) so active meetings
                   keep their event listeners, live chunks, and timer. */}
               <div className={currentSection === "meetings" ? "w-full max-w-3xl" : "hidden"}>
-                <MeetingsPage />
+                <MeetingsPage active={currentSection === "meetings"} />
               </div>
               {renderSettingsContent(currentSection)}
             </div>
