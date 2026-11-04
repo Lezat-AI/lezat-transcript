@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lezat Transcript",
+  "productName": "NoteZat",
   "version": "0.1.63",
   "identifier": "co.lezat.transcript",
   "build": {

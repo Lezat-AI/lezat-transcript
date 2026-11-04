@@ -1410,7 +1410,7 @@ async timesheetRemoveEntryTasks(entryId: number) : Promise<Result<null, string>>
 }
 },
 /**
- * Suggest timesheet fields from task descriptions using the Lezat Scheduling
+ * Suggest timesheet fields from task descriptions using the NoteZat
  * backend AI. Falls back to the user's local LLM config if cloud is unavailable.
  */
 async timesheetAiSuggest(taskDescriptions: string[], projectsJson: string) : Promise<Result<TimesheetAiSuggestion, string>> {
@@ -1494,7 +1494,7 @@ save_meeting_audio?: boolean;
  */
 transcription_initial_prompt?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number; 
 /**
- * URL of the Lezat Scheduling backend (e.g. https://scheduling-lezat-backend-production.up.railway.app)
+ * URL of the NoteZat backend (e.g. https://scheduling-lezat-backend-production.up.railway.app)
  */
 cloud_sync_url?: string | null; 
 /**

@@ -261,7 +261,7 @@ jobs:
                   continue
               sig = sig_files[0].read_text().strip()
               # GitHub normalizes spaces → dots on asset upload
-              # (productName "Lezat Transcript" → "Lezat.Transcript..."),
+              # (e.g. a productName with spaces, "My App" → "My.App..."),
               # so latest.json URLs must match the uploaded filename,
               # not the filename on the build runner. Without this the
               # updater gets a 404 and the UI silently resets.
@@ -279,7 +279,7 @@ jobs:
           else:
               manifest = {
                   "version": version,
-                  "notes": f"Lezat Transcript {tag}",
+                  "notes": f"NoteZat {tag}",
                   "pub_date": pub_date,
                   "platforms": platforms,
               }

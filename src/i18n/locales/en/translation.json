@@ -106,7 +106,7 @@
     },
     "permissions": {
       "title": "Permissions Required",
-      "description": "Lezat Transcript needs a couple of permissions to work properly.",
+      "description": "NoteZat needs a couple of permissions to work properly.",
       "microphone": {
         "title": "Microphone Access",
         "description": "Required to hear your voice for transcription."
@@ -169,13 +169,13 @@
         "cloudDesc": "Best quality, handles code-switching",
         "local": "Local",
         "localDesc": "On-device, works offline",
-        "cloudUnavailable": "Sign in to Lezat Cloud to enable cloud transcription."
+        "cloudUnavailable": "Sign in to NoteZat to enable cloud transcription."
       }
     },
     "general": {
       "title": "General",
       "shortcut": {
-        "title": "Lezat Transcript Shortcuts",
+        "title": "NoteZat Shortcuts",
         "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
         "loading": "Loading shortcuts...",
         "none": "No shortcuts configured",
@@ -293,11 +293,11 @@
       },
       "autostart": {
         "label": "Launch on Startup",
-        "description": "Automatically start Lezat Transcript when you log in to your computer."
+        "description": "Automatically start NoteZat when you log in to your computer."
       },
       "showTrayIcon": {
         "label": "Show Tray Icon",
-        "description": "Display the Lezat Transcript icon in the system tray."
+        "description": "Display the NoteZat icon in the system tray."
       },
       "overlay": {
         "title": "Overlay Position",
@@ -462,7 +462,7 @@
       },
       "updateChecks": {
         "label": "Check for Updates",
-        "description": "Automatically check for new versions of Lezat Transcript"
+        "description": "Automatically check for new versions of NoteZat"
       },
       "soundTheme": {
         "label": "Sound Theme",
@@ -530,11 +530,11 @@
       "title": "About",
       "version": {
         "title": "Version",
-        "description": "Current version of Lezat Transcript"
+        "description": "Current version of NoteZat"
       },
       "appDataDirectory": {
         "title": "App Data Directory",
-        "description": "Location where Lezat Transcript stores its data"
+        "description": "Location where NoteZat stores its data"
       },
       "sourceCode": {
         "title": "Source Code",
@@ -543,7 +543,7 @@
       },
       "supportDevelopment": {
         "title": "Support upstream Handy",
-        "description": "Lezat Transcript is a fork of Handy — this button opens Handy's donation page so you can support the project that does the heavy lifting. (This is not a donation to Lezat.)",
+        "description": "NoteZat is a fork of Handy — this button opens Handy's donation page so you can support the project that does the heavy lifting. (This is not a donation to Lezat.)",
         "button": "Donate to Handy"
       },
       "acknowledgments": {
@@ -551,12 +551,12 @@
         "whisper": {
           "title": "Whisper.cpp",
           "description": "High-performance inference of OpenAI's Whisper automatic speech recognition model",
-          "details": "Lezat Transcript uses Whisper.cpp for fast, local speech-to-text processing. Thanks to the amazing work by Georgi Gerganov and contributors."
+          "details": "NoteZat uses Whisper.cpp for fast, local speech-to-text processing. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
     },
     "cloudSync": {
-      "title": "Lezat Scheduling",
+      "title": "NoteZat",
       "onboarding": {
         "title": "Sign in to unlock all features",
         "subtitle": "Create your free account or sign in to automatically sync transcriptions, extract action items with AI, and connect your team's tools — all included."
@@ -600,7 +600,7 @@
         "passwordMismatch": "Passwords do not match"
       },
       "connected": {
-        "title": "Connected to Lezat Scheduling",
+        "title": "Connected to NoteZat",
         "whatYouGet": "What's included"
       },
       "autoSync": {
@@ -663,7 +663,7 @@
   },
   "accessibility": {
     "permissionsRequired": "Accessibility Permissions Required",
-    "permissionsDescription": "Lezat Transcript needs accessibility permissions to type transcribed text.",
+    "permissionsDescription": "NoteZat needs accessibility permissions to type transcribed text.",
     "openSettings": "Open System Settings",
     "dismiss": "Dismiss"
   },
@@ -686,7 +686,7 @@
   },
   "appLanguage": {
     "title": "Application Language",
-    "description": "Change the language of the Lezat Transcript interface"
+    "description": "Change the language of the NoteZat interface"
   },
   "overlay": {
     "transcribing": "Transcribing...",

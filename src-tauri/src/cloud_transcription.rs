@@ -1,4 +1,4 @@
-//! Cloud Transcription — sends audio to the Lezat Scheduling backend
+//! Cloud Transcription — sends audio to the NoteZat backend
 //! for server-side ASR (Gemini). The backend handles provider selection.
 //!
 //! Reuses the same authentication (`X-API-Key`) and base URL as `cloud_sync`.

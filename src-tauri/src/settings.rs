@@ -471,8 +471,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
 
-    // ── Cloud Sync (Lezat Scheduling backend) ──
-    /// URL of the Lezat Scheduling backend (e.g. https://scheduling-lezat-backend-production.up.railway.app)
+    // ── Cloud Sync (NoteZat backend) ──
+    /// URL of the NoteZat backend (e.g. https://scheduling-lezat-backend-production.up.railway.app)
     #[serde(default)]
     pub cloud_sync_url: Option<String>,
     /// API key for authenticating with the web backend. Generated in the web dashboard.

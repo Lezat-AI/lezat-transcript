@@ -1,4 +1,4 @@
-# Lezat Transcript
+# NoteZat (desktop)
 
 A local-first push-to-talk voice-to-text app for macOS, Windows, and Linux.
 
@@ -6,7 +6,7 @@ A local-first push-to-talk voice-to-text app for macOS, Windows, and Linux.
 
 ## Based on Handy
 
-Lezat Transcript is a fork of [Handy](https://github.com/cjpais/Handy) by CJ Pais,
+NoteZat (formerly Lezat Transcript) is a fork of [Handy](https://github.com/cjpais/Handy) by CJ Pais,
 used here under the MIT License. Upstream is tracked as the `upstream` git remote.
 
 Copyright (c) 2025 CJ Pais — original work.

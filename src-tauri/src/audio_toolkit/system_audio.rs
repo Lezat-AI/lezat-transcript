@@ -93,7 +93,7 @@ fn resolve_macos() -> SystemAudioStatus {
         Err(_) => {
             return SystemAudioStatus::NotConfigured {
                 install_hint: "Couldn't enumerate audio devices. Open \
-System Settings → Privacy & Security → Microphone and grant Lezat Transcript \
+System Settings → Privacy & Security → Microphone and grant NoteZat \
 access, then relaunch."
                     .to_string(),
             }

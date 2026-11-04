@@ -87,9 +87,9 @@ pub fn tray_tooltip() -> String {
 
 fn version_label() -> String {
     if cfg!(debug_assertions) {
-        format!("Lezat Transcript v{} (Dev)", env!("CARGO_PKG_VERSION"))
+        format!("NoteZat v{} (Dev)", env!("CARGO_PKG_VERSION"))
     } else {
-        format!("Lezat Transcript v{}", env!("CARGO_PKG_VERSION"))
+        format!("NoteZat v{}", env!("CARGO_PKG_VERSION"))
     }
 }
 

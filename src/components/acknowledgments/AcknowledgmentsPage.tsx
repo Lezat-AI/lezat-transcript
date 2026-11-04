@@ -13,7 +13,7 @@ const ITEMS: Acknowledgment[] = [
   {
     name: "Handy",
     blurb:
-      "Lezat Transcript es un fork de Handy por CJ Pais. La estructura de la app, el flujo de presionar para hablar, la orquestación de transcripción y gran parte del scaffolding de Tauri provienen directamente del proyecto original. Gracias por la licencia MIT y el código limpio.",
+      "NoteZat es un fork de Handy por CJ Pais. La estructura de la app, el flujo de presionar para hablar, la orquestación de transcripción y gran parte del scaffolding de Tauri provienen directamente del proyecto original. Gracias por la licencia MIT y el código limpio.",
     url: "https://github.com/cjpais/Handy",
   },
   {
@@ -42,7 +42,7 @@ const ITEMS: Acknowledgment[] = [
   {
     name: "Colaboradores de la comunidad",
     blurb:
-      "Todos los que han ayudado a mejorar Handy (y por extensión Lezat Transcript) — reportes de bugs, traducciones, PRs, documentación y retroalimentación.",
+      "Todos los que han ayudado a mejorar Handy (y por extensión NoteZat) — reportes de bugs, traducciones, PRs, documentación y retroalimentación.",
   },
 ];
 
@@ -52,7 +52,7 @@ export function AcknowledgmentsPage() {
       <header className="flex flex-col gap-2">
 <h2 className="text-lg font-bold">Reconocimientos</h2>
 <p className="text-sm text-mid-gray leading-relaxed">
-          Lezat Transcript se apoya en muchos hombros. A continuación están los
+          NoteZat se apoya en muchos hombros. A continuación están los
           proyectos y personas sin los cuales esto no existiría.
         </p>
       </header>

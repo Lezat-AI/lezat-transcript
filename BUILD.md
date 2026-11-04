@@ -1,4 +1,4 @@
-# Building Lezat Transcript
+# Building NoteZat
 
 Three ways to produce installers, depending on how much you want to own
 locally vs. let CI do the work.
@@ -34,7 +34,7 @@ bun install
 bun run tauri build --bundles dmg
 ```
 
-Output: `src-tauri/target/release/bundle/dmg/Lezat Transcript_<version>_aarch64.dmg`
+Output: `src-tauri/target/release/bundle/dmg/NoteZat_<version>_aarch64.dmg`
 
 Apple Intelligence (the `@Generable` Swift macro path) only compiles under the
 **full Xcode**, not Command Line Tools. `build.rs` auto-stubs when CLT is
@@ -60,7 +60,7 @@ bun install
 bun run tauri build --bundles msi
 ```
 
-Output: `src-tauri\target\release\bundle\msi\Lezat Transcript_<version>_x64_en-US.msi`
+Output: `src-tauri\target\release\bundle\msi\NoteZat_<version>_x64_en-US.msi`
 
 Installer is unsigned. Windows SmartScreen will warn on first run — "More
 info" → "Run anyway". For trusted installers you'll need Azure Trusted

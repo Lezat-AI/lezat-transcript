@@ -100,7 +100,7 @@
     },
     "permissions": {
       "title": "Wymagane uprawnienia",
-      "description": "Lezat Transcript potrzebuje kilku uprawnień, aby działać poprawnie.",
+      "description": "NoteZat potrzebuje kilku uprawnień, aby działać poprawnie.",
       "microphone": {
         "title": "Dostęp do mikrofonu",
         "description": "Wymagany do słyszenia Twojego głosu w celu transkrypcji."
@@ -176,7 +176,7 @@
     "general": {
       "title": "Ogólne",
       "shortcut": {
-        "title": "Skróty Lezat Transcript",
+        "title": "Skróty NoteZat",
         "description": "Skonfiguruj skróty klawiaturowe do uruchamiania nagrywania mowy",
         "loading": "Wczytywanie skrótów...",
         "none": "Brak skonfigurowanych skrótów",
@@ -276,11 +276,11 @@
       },
       "autostart": {
         "label": "Uruchamiaj przy starcie",
-        "description": "Automatycznie uruchamiaj Lezat Transcript po zalogowaniu."
+        "description": "Automatycznie uruchamiaj NoteZat po zalogowaniu."
       },
       "showTrayIcon": {
         "label": "Pokaż ikonę w zasobniku",
-        "description": "Wyświetlaj ikonę Lezat Transcript w zasobniku systemowym."
+        "description": "Wyświetlaj ikonę NoteZat w zasobniku systemowym."
       },
       "overlay": {
         "title": "Pozycja nakładki",
@@ -445,7 +445,7 @@
       },
       "updateChecks": {
         "label": "Sprawdzaj aktualizacje",
-        "description": "Automatycznie sprawdzaj nowe wersje Lezat Transcript"
+        "description": "Automatycznie sprawdzaj nowe wersje NoteZat"
       },
       "soundTheme": {
         "label": "Motyw dźwiękowy",
@@ -513,11 +513,11 @@
       "title": "O programie",
       "version": {
         "title": "Wersja",
-        "description": "Aktualna wersja Lezat Transcript"
+        "description": "Aktualna wersja NoteZat"
       },
       "appDataDirectory": {
         "title": "Katalog danych aplikacji",
-        "description": "Miejsce, gdzie Lezat Transcript przechowuje swoje dane"
+        "description": "Miejsce, gdzie NoteZat przechowuje swoje dane"
       },
       "sourceCode": {
         "title": "Kod źródłowy",
@@ -526,7 +526,7 @@
       },
       "supportDevelopment": {
         "title": "Wspieraj rozwój",
-        "description": "Pomóż nam dalej rozwijać Lezat Transcript",
+        "description": "Pomóż nam dalej rozwijać NoteZat",
         "button": "Wesprzyj"
       },
       "acknowledgments": {
@@ -534,7 +534,7 @@
         "whisper": {
           "title": "Whisper.cpp",
           "description": "Wydajne wykonywanie modelu rozpoznawania mowy Whisper od OpenAI",
-          "details": "Lezat Transcript używa Whisper.cpp do szybkiego, lokalnego przetwarzania mowy na tekst. Dzięki niesamowitej pracy Georgi Gerganova i współtwórców."
+          "details": "NoteZat używa Whisper.cpp do szybkiego, lokalnego przetwarzania mowy na tekst. Dzięki niesamowitej pracy Georgi Gerganova i współtwórców."
         }
       }
     }
@@ -580,7 +580,7 @@
   },
   "accessibility": {
     "permissionsRequired": "Wymagane uprawnienia dostępności",
-    "permissionsDescription": "Lezat Transcript potrzebuje uprawnień dostępności, aby wpisywać transkrybowany tekst.",
+    "permissionsDescription": "NoteZat potrzebuje uprawnień dostępności, aby wpisywać transkrybowany tekst.",
     "openSettings": "Otwórz ustawienia systemowe",
     "dismiss": "Zamknij"
   },
@@ -603,7 +603,7 @@
   },
   "appLanguage": {
     "title": "Język aplikacji",
-    "description": "Zmień język interfejsu Lezat Transcript"
+    "description": "Zmień język interfejsu NoteZat"
   },
   "overlay": {
     "transcribing": "Transkrypcja...",

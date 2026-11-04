@@ -1,28 +1,28 @@
 import React from "react";
-import lezatLogo from "../../assets/lezat-logo.png";
 
-// Lezat wordmark — real logo extracted from the brand HTML invitation.
-// Component name preserved so upstream Handy imports don't need rewiring.
-// The source PNG is white-on-transparent and looks best against a dark
-// background; upstream callers pass className with `text-white` / dark bg.
+// NoteZat wordmark ("Note" in the text colour, "Zat." in sage), drawn as text
+// in Barlow Bold so it follows the light and dark themes.
+// Component name kept so upstream Handy imports don't need rewiring.
 const HandyTextLogo = ({
-  width,
-  height,
+  width = 120,
   className,
 }: {
   width?: number;
   height?: number;
   className?: string;
 }) => {
+  // Barlow Bold "NoteZat." is about 4.1 em wide.
+  const fontSize = Math.round(width / 4.1);
   return (
-    <img
-      src={lezatLogo}
-      alt="Lezat"
-      width={width}
-      height={height}
-      className={className}
-      style={{ objectFit: "contain" }}
-    />
+    <span
+      role="img"
+      aria-label="NoteZat"
+      className={`notezat-wordmark select-none text-text ${className ?? ""}`}
+      style={{ fontSize, width, display: "inline-block", textAlign: "center" }}
+    >
+      {"Note"}
+      <span className="text-lezat-sage">{"Zat."}</span>
+    </span>
   );
 };
 

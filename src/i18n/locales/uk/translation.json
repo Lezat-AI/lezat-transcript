@@ -100,7 +100,7 @@
     },
     "permissions": {
       "title": "Потрібні дозволи",
-      "description": "Lezat Transcript потребує деяких дозволів для коректної роботи.",
+      "description": "NoteZat потребує деяких дозволів для коректної роботи.",
       "microphone": {
         "title": "Доступ до мікрофона",
         "description": "Потрібен для прослуховування вашого голосу для транскрипції."
@@ -276,11 +276,11 @@
       },
       "autostart": {
         "label": "Запуск при старті системи",
-        "description": "Автоматично запускати Lezat Transcript при вході в систему"
+        "description": "Автоматично запускати NoteZat при вході в систему"
       },
       "showTrayIcon": {
         "label": "Показати значок у треї",
-        "description": "Відображати значок Lezat Transcript у системному треї."
+        "description": "Відображати значок NoteZat у системному треї."
       },
       "overlay": {
         "title": "Позиція оверлею",
@@ -445,7 +445,7 @@
       },
       "updateChecks": {
         "label": "Перевірка оновлень",
-        "description": "Автоматично перевіряти наявність нових версій Lezat Transcript"
+        "description": "Автоматично перевіряти наявність нових версій NoteZat"
       },
       "soundTheme": {
         "label": "Звукова тема",
@@ -513,11 +513,11 @@
       "title": "Інфо",
       "version": {
         "title": "Версія",
-        "description": "Поточна версія Lezat Transcript"
+        "description": "Поточна версія NoteZat"
       },
       "appDataDirectory": {
         "title": "Папка даних програми",
-        "description": "Розташування даних Lezat Transcript"
+        "description": "Розташування даних NoteZat"
       },
       "sourceCode": {
         "title": "Вихідний код",
@@ -526,7 +526,7 @@
       },
       "supportDevelopment": {
         "title": "Підтримати розробку",
-        "description": "Допоможіть нам продовжувати розвивати Lezat Transcript",
+        "description": "Допоможіть нам продовжувати розвивати NoteZat",
         "button": "Підтримати"
       },
       "acknowledgments": {
@@ -534,7 +534,7 @@
         "whisper": {
           "title": "Whisper.cpp",
           "description": "Високопродуктивний інференс моделі автоматичного розпізнавання мовлення Whisper від OpenAI",
-          "details": "Lezat Transcript використовує Whisper.cpp для швидкої локальної обробки мовлення в текст. Дякуємо за чудову роботу Георгію Герганову та контриб'юторам."
+          "details": "NoteZat використовує Whisper.cpp для швидкої локальної обробки мовлення в текст. Дякуємо за чудову роботу Георгію Герганову та контриб'юторам."
         }
       }
     }
@@ -580,7 +580,7 @@
   },
   "accessibility": {
     "permissionsRequired": "Потрібні права доступу",
-    "permissionsDescription": "Lezat Transcript потребує дозволи доступності для введення транскрибованого тексту.",
+    "permissionsDescription": "NoteZat потребує дозволи доступності для введення транскрибованого тексту.",
     "openSettings": "Відкрити Системні налаштування",
     "dismiss": "Закрити"
   },
@@ -603,7 +603,7 @@
   },
   "appLanguage": {
     "title": "Мова інтерфейсу",
-    "description": "Змінити мову інтерфейсу Lezat Transcript"
+    "description": "Змінити мову інтерфейсу NoteZat"
   },
   "overlay": {
     "transcribing": "Обробка...",

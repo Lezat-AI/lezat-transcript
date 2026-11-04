@@ -331,7 +331,7 @@ pub async fn timesheet_remove_entry_tasks(app: AppHandle, entry_id: i64) -> Resu
     Ok(())
 }
 
-/// Suggest timesheet fields from task descriptions using the Lezat Scheduling
+/// Suggest timesheet fields from task descriptions using the NoteZat
 /// backend AI. Falls back to the user's local LLM config if cloud is unavailable.
 #[tauri::command]
 #[specta::specta]
@@ -344,7 +344,7 @@ pub async fn timesheet_ai_suggest(
     let descs = task_descriptions.clone();
     let pjson = projects_json.clone();
 
-    // Strategy 1: Use the Lezat Scheduling backend (no user config needed)
+    // Strategy 1: Use the NoteZat backend (no user config needed)
     let cloud_result = tokio::task::spawn_blocking(move || {
         crate::cloud_sync::ai_suggest_timesheet(&s, &descs, &pjson)
     })

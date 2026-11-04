@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+/* NoteZat wordmark font (Barlow, SIL Open Font License). */
+@font-face {
+  font-family: "Barlow";
+  font-weight: 700;
+  src: url("./assets/fonts/Barlow-Bold.ttf") format("truetype");
+  font-display: swap;
+}
+.notezat-wordmark {
+  font-family: "Barlow", system-ui, sans-serif;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
 @theme {
   /* Design tokens — Lezat palette
      Primary monochrome navy + white (from brand HTML), with a sage green

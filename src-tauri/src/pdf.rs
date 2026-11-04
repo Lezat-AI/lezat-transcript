@@ -349,7 +349,7 @@ pub fn build_pdf(title: &str, subtitle: &str, paragraphs: &[DocxParagraph]) -> V
         .collect();
     objects.push(
         format!(
-            "<< /Title <{}> /Producer (Lezat Transcript) >>",
+            "<< /Title <{}> /Producer (NoteZat) >>",
             hex(&pdf_title)
         )
         .into_bytes(),

@@ -1,4 +1,4 @@
-//! Cloud Sync — sends meeting transcriptions to the Lezat Scheduling backend
+//! Cloud Sync — sends meeting transcriptions to the NoteZat backend
 //! and fetches action items, transcriptions, and integrations status.
 //!
 //! All requests are authenticated via `X-API-Key` header.
@@ -1313,7 +1313,7 @@ fn serve_integration_success_html(mut stream: std::net::TcpStream) -> Result<()>
     let _ = stream.read(&mut buf);
 
     let html = r#"<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Lezat Transcript</title>
+<html><head><meta charset="utf-8"><title>NoteZat</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; display: flex;
          align-items: center; justify-content: center; min-height: 100vh;
@@ -1698,7 +1698,7 @@ pub fn login_and_create_api_key(
             format!("Bearer {}", login_data.access_token),
         )
         .json(&serde_json::json!({
-            "label": "Lezat Transcript Desktop App",
+            "label": "NoteZat Desktop App",
         }))
         .send()
         .map_err(|e| anyhow!("Failed to create API key: {e}"))?;
@@ -1763,7 +1763,7 @@ pub fn register_and_create_api_key(
             format!("Bearer {}", login_data.access_token),
         )
         .json(&serde_json::json!({
-            "label": "Lezat Transcript Desktop App",
+            "label": "NoteZat Desktop App",
         }))
         .send()
         .map_err(|e| anyhow!("Failed to create API key: {e}"))?;
@@ -1856,7 +1856,7 @@ fn serve_oauth_html(mut stream: std::net::TcpStream) -> Result<()> {
     let _ = stream.read(&mut buf);
 
     let html = r#"<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Lezat Transcript</title>
+<html><head><meta charset="utf-8"><title>NoteZat</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; display: flex;
          align-items: center; justify-content: center; min-height: 100vh;
@@ -1870,7 +1870,7 @@ fn serve_oauth_html(mut stream: std::net::TcpStream) -> Result<()> {
 </style></head>
 <body><div class="card" id="card">
   <div class="spinner"></div>
-  <p>Connecting to Lezat Transcript...</p>
+  <p>Connecting to NoteZat...</p>
 </div>
 <script>
   const frag = window.location.hash.substring(1);

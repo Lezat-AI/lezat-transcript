@@ -1,4 +1,4 @@
-//! Tauri commands for cloud sync with the Lezat Scheduling backend.
+//! Tauri commands for cloud sync with the NoteZat backend.
 
 use std::sync::Arc;
 

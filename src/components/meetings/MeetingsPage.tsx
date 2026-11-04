@@ -519,13 +519,13 @@ export function MeetingsPage({ active = true }: { active?: boolean }) {
               {status.state === "syncing" && (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Sincronizando reunión con Lezat Scheduling...</span>
+                  <span>Sincronizando reunión con NoteZat...</span>
                 </>
               )}
               {status.state === "success" && (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Reunión sincronizada con Lezat Scheduling</span>
+                  <span>Reunión sincronizada con NoteZat</span>
                 </>
               )}
               {status.state === "failed" && (

@@ -100,7 +100,7 @@
     },
     "permissions": {
       "title": "الأذونات المطلوبة",
-      "description": ".يحتاج Lezat Transcript إلى بعض الأذونات ليعمل بشكل صحيح",
+      "description": ".يحتاج NoteZat إلى بعض الأذونات ليعمل بشكل صحيح",
       "microphone": {
         "title": "الوصول إلى الميكروفون",
         "description": ".مطلوب لسماع صوتك من أجل التفريغ الصوتي"
@@ -154,7 +154,7 @@
     "general": {
       "title": "عام",
       "shortcut": {
-        "title": "اختصارات Lezat Transcript",
+        "title": "اختصارات NoteZat",
         "description": "إعداد اختصارات لوحة المفاتيح لبدء تسجيل التفريغ الصوتي",
         "loading": "...جاري تحميل الاختصارات",
         "none": "لا توجد اختصارات مجهزة",
@@ -254,11 +254,11 @@
       },
       "autostart": {
         "label": "التشغيل عند بدء التشغيل",
-        "description": ".بدء تشغيل Lezat Transcript تلقائياً عند تسجيل الدخول إلى جهاز الكمبيوتر الخاص بك"
+        "description": ".بدء تشغيل NoteZat تلقائياً عند تسجيل الدخول إلى جهاز الكمبيوتر الخاص بك"
       },
       "showTrayIcon": {
         "label": "إظهار أيقونة شريط النظام",
-        "description": ".عرض أيقونة Lezat Transcript في شريط النظام"
+        "description": ".عرض أيقونة NoteZat في شريط النظام"
       },
       "overlay": {
         "title": "موقع التراكب",
@@ -423,7 +423,7 @@
       },
       "updateChecks": {
         "label": "التحقق من وجود تحديثات",
-        "description": "التحقق تلقائياً من وجود إصدارات جديدة من Lezat Transcript"
+        "description": "التحقق تلقائياً من وجود إصدارات جديدة من NoteZat"
       },
       "soundTheme": {
         "label": "سمة الصوت",
@@ -491,11 +491,11 @@
       "title": "حول",
       "version": {
         "title": "الإصدار",
-        "description": "الإصدار الحالي من Lezat Transcript"
+        "description": "الإصدار الحالي من NoteZat"
       },
       "appDataDirectory": {
         "title": "مجلد بيانات التطبيق",
-        "description": "الموقع الذي يخزن فيه Lezat Transcript بياناته"
+        "description": "الموقع الذي يخزن فيه NoteZat بياناته"
       },
       "sourceCode": {
         "title": "كود المصدر",
@@ -504,7 +504,7 @@
       },
       "supportDevelopment": {
         "title": "دعم التطوير",
-        "description": "ساعدنا في مواصلة بناء Lezat Transcript",
+        "description": "ساعدنا في مواصلة بناء NoteZat",
         "button": "تبرع"
       },
       "acknowledgments": {
@@ -512,7 +512,7 @@
         "whisper": {
           "title": "Whisper.cpp",
           "description": "استنتاج عالي الأداء لنموذج التعرف التلقائي على الكلام Whisper من OpenAI",
-          "details": ".يستخدم Lezat Transcript برنامج Whisper.cpp لمعالجة سريعة ومحلية لتحويل الكلام إلى نص. شكراً للعمل الرائع الذي قام به Georgi Gerganov والمساهمون"
+          "details": ".يستخدم NoteZat برنامج Whisper.cpp لمعالجة سريعة ومحلية لتحويل الكلام إلى نص. شكراً للعمل الرائع الذي قام به Georgi Gerganov والمساهمون"
         }
       }
     },
@@ -580,7 +580,7 @@
   },
   "accessibility": {
     "permissionsRequired": "أذونات إمكانية الوصول مطلوبة",
-    "permissionsDescription": ".يحتاج Lezat Transcript إلى أذونات إمكانية الوصول لكتابة النص المفرغ",
+    "permissionsDescription": ".يحتاج NoteZat إلى أذونات إمكانية الوصول لكتابة النص المفرغ",
     "openSettings": "فتح إعدادات النظام",
     "dismiss": "تجاهل"
   },
@@ -603,7 +603,7 @@
   },
   "appLanguage": {
     "title": "لغة التطبيق",
-    "description": "تغيير لغة واجهة Lezat Transcript"
+    "description": "تغيير لغة واجهة NoteZat"
   },
   "overlay": {
     "transcribing": "...جاري التفريغ",

@@ -524,7 +524,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                           Sigue esperando — esto generalmente significa que macOS tiene una entrada obsoleta de una instalación anterior.
                         </p>
                         <p className="mb-2">
-                          Abre Ajustes del Sistema → Privacidad y Seguridad → Accesibilidad, elimina cualquier entrada existente de &quot;Lezat Transcript&quot; (el botón menos), luego haz clic en Reintentar abajo.
+                          Abre Ajustes del Sistema → Privacidad y Seguridad → Accesibilidad, elimina cualquier entrada existente de &quot;NoteZat&quot; o &quot;Lezat Transcript&quot; (el botón menos), luego haz clic en Reintentar abajo.
                         </p>
                         <button
                           onClick={handleRetryAccessibility}
