@@ -21,7 +21,8 @@
     "acknowledgments": "Reconocimientos",
     "cloudSync": "Mi Cuenta",
     "actionItems": "Tareas de Reuniones",
-    "integrations": "Integraciones"
+    "integrations": "Integraciones",
+    "organization": "Organización"
   },
   "onboarding": {
     "subtitle": "Para comenzar, elige un modelo de transcripción",
@@ -610,6 +611,27 @@
       "logout": "Desconectar",
       "connectionSuccess": "Conectado",
       "connectionFailed": "Error de conexión"
+    },
+    "organization": {
+      "title": "Organización",
+      "description": "Gestiona los proyectos y el glosario de IA de tu organización. Se aplican a todo tu equipo.",
+      "readOnly": "Solo los propietarios y administradores pueden editarlos. Tienes acceso de solo lectura.",
+      "projects": {
+        "title": "Proyectos",
+        "description": "Proyectos a los que se pueden asignar las tareas de reunión.",
+        "placeholder": "Nombre del nuevo proyecto",
+        "add": "Añadir",
+        "empty": "Aún no hay proyectos. Las tareas aparecerán como «sin proyecto».",
+        "remove": "Eliminar {{name}}"
+      },
+      "glossary": {
+        "title": "Glosario de IA",
+        "description": "Palabras y nombres que la IA debe escribir correctamente en transcripciones y tareas.",
+        "placeholder": "Nueva palabra o nombre",
+        "add": "Añadir",
+        "empty": "Aún no hay palabras en el glosario.",
+        "remove": "Eliminar {{term}}"
+      }
     }
   },
   "footer": {

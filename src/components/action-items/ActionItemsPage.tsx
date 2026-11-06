@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
 import { ApprovalReviewModal } from "./ApprovalReviewModal";
-import { groupByProject, PROJECT_OPTIONS, resolveProject } from "./projects";
+import { groupByProject, resolveProject } from "./projects";
+import { useOrgStore } from "@/stores/orgStore";
 import {
   CALENDAR_TARGETS,
   type CloudActionItem,
@@ -543,6 +544,8 @@ function BulkApprovalBar({
   onClear: () => void;
 }) {
   const { t } = useTranslation();
+  // The org's projects (per-organization, from the backend).
+  const projectOptions = useOrgStore((s) => s.projects);
 
   return (
     <div className="sticky bottom-0 border-t border-mid-gray/20 bg-background/95 backdrop-blur-sm px-6 py-3 flex flex-col gap-3">
@@ -574,7 +577,7 @@ function BulkApprovalBar({
             className="px-2 py-1.5 rounded-lg border border-mid-gray/20 bg-background text-xs text-text focus:outline-none focus:border-lezat-sage/50"
           >
             <option value="">{t("actionItems.project.moveTo")}</option>
-            {PROJECT_OPTIONS.map((p) => (
+            {projectOptions.map((p) => (
               <option key={p} value={p}>
                 {p}
               </option>
@@ -617,7 +620,9 @@ function ProjectPicker({
   onChange: (project: string | null) => void;
 }) {
   const { t } = useTranslation();
-  const options = value && !PROJECT_OPTIONS.includes(value) ? [...PROJECT_OPTIONS, value] : PROJECT_OPTIONS;
+  // The org's projects (per-organization, from the backend) offered in the picker.
+  const projectOptions = useOrgStore((s) => s.projects);
+  const options = value && !projectOptions.includes(value) ? [...projectOptions, value] : projectOptions;
   return (
     <label
       className={`relative flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
@@ -1212,6 +1217,13 @@ export const ActionItemsPage: React.FC = () => {
   }, [isConfigured]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  // Load the org's projects (per-organization, from the backend) so tasks can be
+  // classified/grouped and the project pickers are populated. Falls back to empty.
+  const loadOrgProjects = useOrgStore((s) => s.loadProjects);
+  useEffect(() => {
+    if (isConfigured) void loadOrgProjects();
+  }, [isConfigured, loadOrgProjects]);
 
   // Load task→entry mapping from settings
   useEffect(() => {

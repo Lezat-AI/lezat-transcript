@@ -21,7 +21,8 @@
     "acknowledgments": "Acknowledgments",
     "cloudSync": "My Account",
     "actionItems": "Meeting Tasks",
-    "integrations": "Integrations"
+    "integrations": "Integrations",
+    "organization": "Organization"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -610,6 +611,27 @@
       "logout": "Disconnect",
       "connectionSuccess": "Connected",
       "connectionFailed": "Connection failed"
+    },
+    "organization": {
+      "title": "Organization",
+      "description": "Manage your organization's projects and AI glossary. These apply to everyone in your organization.",
+      "readOnly": "Only organization owners and admins can edit these. You have read-only access.",
+      "projects": {
+        "title": "Projects",
+        "description": "Projects that meeting tasks can be assigned to.",
+        "placeholder": "New project name",
+        "add": "Add",
+        "empty": "No projects yet. Tasks will show as “no project”.",
+        "remove": "Remove {{name}}"
+      },
+      "glossary": {
+        "title": "AI glossary",
+        "description": "Words and names the AI should spell correctly in transcripts and tasks.",
+        "placeholder": "New word or name",
+        "add": "Add",
+        "empty": "No glossary words yet.",
+        "remove": "Remove {{term}}"
+      }
     }
   },
   "footer": {

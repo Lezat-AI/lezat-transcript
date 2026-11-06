@@ -465,6 +465,95 @@ pub async fn cloud_update_integration_settings(
     .map_err(|e| e.to_string())?
 }
 
+// ─────────────────── org projects, glossary & role ─────────────────
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_get_org_projects(app: AppHandle) -> Result<cloud_sync::OrgProjects, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::fetch_org_projects(&s).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_add_org_project(
+    app: AppHandle,
+    name: String,
+) -> Result<cloud_sync::OrgProjects, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::add_org_project(&s, &name).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_delete_org_project(
+    app: AppHandle,
+    name: String,
+) -> Result<cloud_sync::OrgProjects, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::delete_org_project(&s, &name).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_get_org_glossary(app: AppHandle) -> Result<cloud_sync::OrgGlossary, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::fetch_org_glossary(&s).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_add_org_glossary(
+    app: AppHandle,
+    term: String,
+) -> Result<cloud_sync::OrgGlossary, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::add_org_glossary(&s, &term).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_delete_org_glossary(
+    app: AppHandle,
+    term: String,
+) -> Result<cloud_sync::OrgGlossary, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || {
+        cloud_sync::delete_org_glossary(&s, &term).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cloud_get_org_role(app: AppHandle) -> Result<cloud_sync::OrgRole, String> {
+    let s = settings::get_settings(&app);
+    tokio::task::spawn_blocking(move || cloud_sync::fetch_org_role(&s).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Register with email + password + name, auto-create API key, and save everything to settings.
 #[tauri::command]
 #[specta::specta]
