@@ -1,38 +1,42 @@
-// Which project (PeopleZat, MediaZat…) a meeting task belongs to.
+// Which project a meeting task belongs to.
 //
 // The backend sends `project` (null = no project); we only tidy its spelling.
+// The list of an organization's projects now comes from the backend
+// (`GET /api/org/projects`), per-organization, rather than a hardcoded list.
+// It is cached in-module so the pure helpers below can tidy spelling without
+// re-fetching; it starts empty, so an org with no projects shows every task as
+// "no project".
 
 /**
- * Known projects, most specific first: "Lezat" must stay last because it is
- * contained in "PeopleZat" ("peop-lezat") once spaces and case are ignored.
+ * The org's known projects, kept in a module-level cache that the org store
+ * fills from the backend. Empty until loaded (NOT a hardcoded Lezat list).
  */
-export const KNOWN_PROJECTS = [
-  "PeopleZat",
-  "SocialZat",
-  "MediaZat",
-  "WealthZat",
-  "NewsZat",
-  "BotZat",
-  "Teucalí",
-  "Kaza Living",
-  "Botero Brain",
-  "Lezat",
-] as const;
+let knownProjects: readonly string[] = [];
+
+/** Replace the cached org project list (called by the org store after a fetch). */
+export function setKnownProjects(projects: readonly string[]): void {
+  knownProjects = [...projects];
+}
+
+/** The cached org project list. */
+export function getKnownProjects(): readonly string[] {
+  return knownProjects;
+}
+
+/** Projects offered when moving a task, alphabetically ("Kaza Living", "Lezat"…). */
+export function projectOptions(): string[] {
+  return [...knownProjects].sort((a, b) => a.localeCompare(b, "es"));
+}
 
 /**
- * Renamed products: tasks saved with the old name show the new one. "MediaZat
- * B2B" is plain MediaZat now that B2C became NewsZat.
+ * Renamed products: tasks saved with the old name show the new one. Kept only as
+ * a local display tidy; the source of truth for projects is the backend.
  */
 const RENAMED_PROJECTS: Record<string, string> = {
   wazat: "BotZat",
   mediazatb2c: "NewsZat",
   mediazatb2b: "MediaZat",
 };
-
-/** Projects offered when moving a task, alphabetically ("Kaza Living", "Lezat"…). */
-export const PROJECT_OPTIONS: readonly string[] = [...KNOWN_PROJECTS].sort(
-  (a, b) => a.localeCompare(b, "es"),
-);
 
 /** Lowercase, no accents, letters and digits only: "Teucalí " → "teucali". */
 function compact(value: string): string {
@@ -48,7 +52,7 @@ export function canonicalProject(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   const key = compact(trimmed);
-  const known = KNOWN_PROJECTS.find((p) => compact(p) === key);
+  const known = knownProjects.find((p) => compact(p) === key);
   return known ?? RENAMED_PROJECTS[key] ?? trimmed;
 }
 

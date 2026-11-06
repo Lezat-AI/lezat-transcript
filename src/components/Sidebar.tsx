@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
-import { Cog, FlaskConical, Heart, Info, Library, Sparkles, Cpu, Video, Cloud, ListChecks, Plug } from "lucide-react";
+import { Cog, FlaskConical, Heart, Info, Library, Sparkles, Cpu, Video, Cloud, ListChecks, Plug, FolderKanban } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
@@ -14,6 +14,7 @@ import {
   PostProcessingSettings,
   ModelsSettings,
   CloudSyncSettings,
+  OrgSettings,
 } from "./settings";
 import MeetingsPage from "./meetings/MeetingsPage";
 import LibraryPage from "./library/LibraryPage";
@@ -79,6 +80,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.integrations",
     icon: Plug,
     component: IntegrationsPage,
+    enabled: (settings) => !!settings?.cloud_sync_enabled,
+  },
+  organization: {
+    labelKey: "sidebar.organization",
+    icon: FolderKanban,
+    component: OrgSettings,
     enabled: (settings) => !!settings?.cloud_sync_enabled,
   },
   advanced: {

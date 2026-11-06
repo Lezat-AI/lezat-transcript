@@ -363,6 +363,26 @@ pub struct CloudLoginResult {
     pub api_key: String,
 }
 
+// ─────────────────────────── org ──────────────────────────────────
+
+/// An organization's project list (per-organization, managed by its owner/admin).
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct OrgProjects {
+    pub projects: Vec<String>,
+}
+
+/// An organization's AI glossary (custom spellings / terms the model should know).
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct OrgGlossary {
+    pub terms: Vec<String>,
+}
+
+/// The current user's role in their organization: "owner", "admin" or "member".
+#[derive(Debug, Deserialize, Serialize, Clone, Type)]
+pub struct OrgRole {
+    pub org_role: String,
+}
+
 // ─────────────────────────── client ──────────────────────────────
 
 /// How long to wait for the backend to process an uploaded meeting.
@@ -1361,6 +1381,158 @@ pub fn disconnect_integration(settings: &AppSettings, provider: &str) -> Result<
     }
 
     Ok(())
+}
+
+// ─────────────────── org projects & glossary ──────────────────────
+
+/// Fetch the organization's project list.
+pub fn fetch_org_projects(settings: &AppSettings) -> Result<OrgProjects> {
+    let url = format!("{}/api/org/projects", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .get(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(anyhow!("Failed to fetch projects (HTTP {status}): {body}"));
+    }
+    resp.json::<OrgProjects>()
+        .map_err(|e| anyhow!("Failed to parse projects: {e}"))
+}
+
+/// Add a project to the organization. Returns the updated list.
+pub fn add_org_project(settings: &AppSettings, name: &str) -> Result<OrgProjects> {
+    let url = format!("{}/api/org/projects", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .post(&url)
+        .header("X-API-Key", key)
+        .json(&serde_json::json!({ "name": name }))
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(anyhow!("Failed to add project (HTTP {status}): {body}"));
+    }
+    resp.json::<OrgProjects>()
+        .map_err(|e| anyhow!("Failed to parse projects: {e}"))
+}
+
+/// Remove a project from the organization. Returns the updated list.
+pub fn delete_org_project(settings: &AppSettings, name: &str) -> Result<OrgProjects> {
+    let url = format!(
+        "{}/api/org/projects/{}",
+        base_url(settings)?,
+        urlencoding::encode(name)
+    );
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .delete(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(anyhow!("Failed to remove project (HTTP {status}): {body}"));
+    }
+    resp.json::<OrgProjects>()
+        .map_err(|e| anyhow!("Failed to parse projects: {e}"))
+}
+
+/// Fetch the organization's AI glossary.
+pub fn fetch_org_glossary(settings: &AppSettings) -> Result<OrgGlossary> {
+    let url = format!("{}/api/org/glossary", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .get(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(anyhow!("Failed to fetch glossary (HTTP {status}): {body}"));
+    }
+    resp.json::<OrgGlossary>()
+        .map_err(|e| anyhow!("Failed to parse glossary: {e}"))
+}
+
+/// Add a term to the organization's AI glossary. Returns the updated list.
+pub fn add_org_glossary(settings: &AppSettings, term: &str) -> Result<OrgGlossary> {
+    let url = format!("{}/api/org/glossary", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .post(&url)
+        .header("X-API-Key", key)
+        .json(&serde_json::json!({ "term": term }))
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(anyhow!("Failed to add term (HTTP {status}): {body}"));
+    }
+    resp.json::<OrgGlossary>()
+        .map_err(|e| anyhow!("Failed to parse glossary: {e}"))
+}
+
+/// Remove a term from the organization's AI glossary. Returns the updated list.
+pub fn delete_org_glossary(settings: &AppSettings, term: &str) -> Result<OrgGlossary> {
+    let url = format!(
+        "{}/api/org/glossary/{}",
+        base_url(settings)?,
+        urlencoding::encode(term)
+    );
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .delete(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(anyhow!("Failed to remove term (HTTP {status}): {body}"));
+    }
+    resp.json::<OrgGlossary>()
+        .map_err(|e| anyhow!("Failed to parse glossary: {e}"))
+}
+
+/// Fetch the current user's role in their organization. Reads `/api/org/branding`,
+/// which includes the user; `org_role` may be top-level or nested under `user`.
+/// Falls back to "member" (read-only) when it can't be determined.
+pub fn fetch_org_role(settings: &AppSettings) -> Result<OrgRole> {
+    let url = format!("{}/api/org/branding", base_url(settings)?);
+    let key = api_key(settings)?;
+    let resp = build_client()?
+        .get(&url)
+        .header("X-API-Key", key)
+        .send()
+        .map_err(|e| anyhow!("Network error: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(anyhow!("Failed to fetch org role (HTTP {status}): {body}"));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .map_err(|e| anyhow!("Failed to parse org branding: {e}"))?;
+    let role = v
+        .get("org_role")
+        .and_then(|r| r.as_str())
+        .or_else(|| {
+            v.get("user")
+                .and_then(|u| u.get("org_role"))
+                .and_then(|r| r.as_str())
+        })
+        .unwrap_or("member")
+        .to_string();
+    Ok(OrgRole { org_role: role })
 }
 
 /// Fetch Notion databases the user has access to.

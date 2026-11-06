@@ -1266,6 +1266,62 @@ async cloudUpdateIntegrationSettings(values: Partial<{ [key in string]: string }
     else return { status: "error", error: e  as any };
 }
 },
+async cloudGetOrgProjects() : Promise<Result<OrgProjects, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_org_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudAddOrgProject(name: string) : Promise<Result<OrgProjects, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_add_org_project", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudDeleteOrgProject(name: string) : Promise<Result<OrgProjects, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_delete_org_project", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetOrgGlossary() : Promise<Result<OrgGlossary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_org_glossary") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudAddOrgGlossary(term: string) : Promise<Result<OrgGlossary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_add_org_glossary", { term }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudDeleteOrgGlossary(term: string) : Promise<Result<OrgGlossary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_delete_org_glossary", { term }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cloudGetOrgRole() : Promise<Result<OrgRole, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cloud_get_org_role") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Login to the Timesheet backend and store the token + credentials in settings.
  */
@@ -1757,6 +1813,18 @@ export type NotionDatabase = { id: string; name: string }
  */
 export type NotionPerson = { id: string; name: string; email?: string | null }
 export type OAuthConnectResponse = { oauth_url: string; state: string | null }
+/**
+ * An organization's AI glossary (custom spellings / terms the model should know).
+ */
+export type OrgGlossary = { terms: string[] }
+/**
+ * An organization's project list (per-organization, managed by its owner/admin).
+ */
+export type OrgProjects = { projects: string[] }
+/**
+ * The current user's role in their organization: "owner", "admin" or "member".
+ */
+export type OrgRole = { org_role: string }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 /**
  * What the default output device looks like, for the "use headphones" hint.

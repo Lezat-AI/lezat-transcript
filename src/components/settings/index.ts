@@ -7,6 +7,7 @@ export { AboutSettings } from "./about/AboutSettings";
 export { PostProcessingSettings } from "./post-processing/PostProcessingSettings";
 export { ModelsSettings } from "./models/ModelsSettings";
 export { CloudSyncSettings } from "./cloud-sync/CloudSyncSettings";
+export { OrgSettings } from "./organization/OrgSettings";
 
 // Individual setting components
 export { MicrophoneSelector } from "./MicrophoneSelector";
