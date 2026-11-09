@@ -1,6 +1,6 @@
 [package]
 name = "lezat-transcript"
-version = "0.1.63"
+version = "0.1.64"
 description = "NoteZat"
 authors = ["Lezat Team", "cjpais (upstream: Handy)"]
 edition = "2021"
