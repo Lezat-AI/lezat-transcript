@@ -610,7 +610,8 @@ pub fn run(cli_args: CliArgs) {
                     .inner_size(960.0, 720.0)
                     .min_inner_size(800.0, 600.0)
                     .resizable(true)
-                    .maximizable(false)
+                    .maximizable(true)
+                    .fullscreen(false)
                     .visible(false);
 
             if let Some(data_dir) = portable::data_dir() {
