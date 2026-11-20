@@ -442,7 +442,17 @@ pub fn sync_meeting(
         local_meeting_id: record.id,
         title: record.title.clone(),
         started_at: record.started_at,
-        ended_at: record.ended_at,
+        // The backend requires an end; a meeting cut by a shutdown has none,
+        // so it ends where its last transcribed chunk ends.
+        ended_at: record.ended_at.or_else(|| {
+            let recorded_ms = record
+                .chunks
+                .iter()
+                .map(|c| c.offset_ms + c.duration_ms.unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            Some(record.started_at + (recorded_ms / 1000) as i64)
+        }),
         duration_ms: record.duration_ms,
         transcript_text: record.transcript_text.clone(),
         chunks: record

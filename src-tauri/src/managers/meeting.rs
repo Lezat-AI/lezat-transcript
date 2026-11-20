@@ -417,6 +417,40 @@ impl MeetingsStore {
         Ok(())
     }
 
+    /// Close meetings left open because the app died while recording (PC shut
+    /// down, crash, force quit): the end is where the last transcribed chunk
+    /// ends. Their upload is queued again from scratch, since every attempt
+    /// made while `ended_at` was missing was rejected by the backend.
+    /// `active` (the meeting recording right now, if any) is left alone.
+    pub fn recover_interrupted(&self, active: Option<i64>) -> Result<Vec<i64>> {
+        let conn = self.conn()?;
+        let ids: Vec<i64> = {
+            let mut stmt =
+                conn.prepare("SELECT id FROM meetings WHERE ended_at IS NULL AND id != ?1")?;
+            let rows = stmt.query_map(params![active.unwrap_or(-1)], |row| row.get(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        for id in &ids {
+            conn.execute(
+                "UPDATE meetings SET
+                   duration_ms = COALESCE((SELECT MAX(json_extract(value, '$.offset_ms')
+                       + COALESCE(json_extract(value, '$.duration_ms'), 0))
+                       FROM json_each(chunks_json)), 0),
+                   ended_at = started_at + COALESCE((SELECT MAX(json_extract(value, '$.offset_ms')
+                       + COALESCE(json_extract(value, '$.duration_ms'), 0))
+                       FROM json_each(chunks_json)), 0) / 1000
+                 WHERE id = ?1 AND ended_at IS NULL",
+                params![id],
+            )?;
+            conn.execute(
+                "UPDATE meetings SET sync_state = ?1, sync_attempts = 0, last_sync_attempt_at = NULL
+                 WHERE id = ?2 AND sync_state IN (?1, ?3)",
+                params![SYNC_PENDING, id, SYNC_FAILED],
+            )?;
+        }
+        Ok(ids)
+    }
+
     pub fn finalize(&self, meeting_id: i64, ended_at: i64, duration_ms: i64) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
@@ -1192,6 +1226,15 @@ impl MeetingManager {
     /// Retry pending/failed uploads in the background: shortly after start-up
     /// and then periodically, each meeting with exponential backoff.
     pub fn spawn_sync_retry_worker(&self) {
+        // Runs at start-up: meetings still open now were cut by a shutdown
+        // or crash. Close them so the retries below can upload them.
+        match self.store.recover_interrupted(self.active_meeting_id()) {
+            Ok(ids) if !ids.is_empty() => {
+                info!("Recovered meetings interrupted while recording: {ids:?}")
+            }
+            Ok(_) => {}
+            Err(e) => warn!("Could not recover interrupted meetings: {e}"),
+        }
         let app = self.app.clone();
         let store = self.store.clone();
         let sync = self.sync.clone();

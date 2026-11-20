@@ -347,13 +347,7 @@ pub fn build_pdf(title: &str, subtitle: &str, paragraphs: &[DocxParagraph]) -> V
         .chain(std::iter::once(0xff))
         .chain(title.encode_utf16().flat_map(|u| u.to_be_bytes()))
         .collect();
-    objects.push(
-        format!(
-            "<< /Title <{}> /Producer (NoteZat) >>",
-            hex(&pdf_title)
-        )
-        .into_bytes(),
-    );
+    objects.push(format!("<< /Title <{}> /Producer (NoteZat) >>", hex(&pdf_title)).into_bytes());
     for (i, content) in pages.iter().enumerate() {
         objects.push(
             format!(
